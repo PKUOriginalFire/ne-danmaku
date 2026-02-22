@@ -119,8 +119,13 @@ class BlacklistService:
 
         for pattern in self._patterns:
             if pattern.search(text):
-                logger.info("Message blocked by blacklist pattern: {}...", text[:20])
-                return True
+                if message.type == 'superchat':
+                    # 替换敏感词
+                    logger.info("Message blocked by forbidden sender name: {}, triggered by pattern: {}", message.sender, pattern.pattern)
+                    message.text = pattern.sub(lambda m: '*' * len(m.group(0)), message.text)
+                else:
+                    logger.info("Message blocked by blacklist pattern: {}...", text[:20])
+                    return True
 
         return False
     
@@ -187,7 +192,7 @@ class DanmakuFilter:
             return True
         
         # ---------- 文字去重过滤 ----------
-        if message.type in ('plain', 'superchat'):
+        if message.type == 'plain':
             text = message.text
 
             # dedup_window <= 0 表示不启用去重

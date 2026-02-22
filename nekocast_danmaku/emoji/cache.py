@@ -16,34 +16,38 @@ MAX_CACHE_SIZE = 200
 PER_USER_LIMIT = 3
 GLOBAL_LIMIT = 10
 
+
 class CacheItem:
-    def __init__(self, data: bytes, content_type: str):
+    def __init__(self, data: bytes, content_type: str, ttl: int):
         self.data = data
         self.content_type = content_type
-        self.expire = time.time() + TTL_SECONDS
+        self.ttl = ttl
+        self.expire = time.time() + ttl
         self.last_access = time.time()
+
 
 class EmojiCache:
     def __init__(self):
         self.store: Dict[str, CacheItem] = {}
-        # 信号量：每个用户
         self.user_sems: Dict[str, asyncio.Semaphore] = {}
-        # 全局信号量
         self.global_sem = asyncio.Semaphore(GLOBAL_LIMIT)
 
     def get(self, key: str):
         item = self.store.get(key)
         if not item:
             return None
+
         if item.expire < time.time():
             del self.store[key]
             return None
+
+        # 访问续命
         item.last_access = time.time()
-        item.expire = time.time() + TTL_SECONDS
+        item.expire = time.time() + item.ttl
         return item
 
-    def set(self, key: str, data: bytes, content_type: str):
-        self.store[key] = CacheItem(data, content_type)
+    def set(self, key: str, data: bytes, content_type: str, ttl_seconds: int = TTL_SECONDS):
+        self.store[key] = CacheItem(data, content_type, ttl_seconds)
 
     async def cleanup_loop(self):
         while True:
@@ -68,8 +72,14 @@ class EmojiCache:
 
             await asyncio.sleep(30)
 
-    def import_emoji_sync(self, content: bytes, max_size: int = 100):
-        """原来的同步处理函数，输入 bytes，输出 key 和 content"""
+    def import_emoji_sync(
+        self,
+        content: bytes,
+        max_size: int = 100,
+        ttl_seconds: int = TTL_SECONDS
+    ):
+        """同步处理图片 -> 返回 key"""
+
         img = Image.open(io.BytesIO(content))
         is_animated = getattr(img, "is_animated", False)
 
@@ -81,7 +91,7 @@ class EmojiCache:
             content_resized = output.getvalue()
             content_type = "image/webp"
 
-        # 动态 GIF → 转 WebP 动图
+        # 动态 GIF
         else:
             frames = []
             for frame in ImageSequence.Iterator(img):
@@ -103,19 +113,26 @@ class EmojiCache:
             content_resized = output.getvalue()
             content_type = "image/webp"
 
-        # hash
         key = hashlib.md5(content_resized).hexdigest()
+
         if self.get(key):
             return key
 
-        self.set(key, content_resized, content_type)
+        self.set(key, content_resized, content_type, ttl_seconds)
         return key
 
-    async def load_emoji(self, url: str, user: str, max_size: int = 100):
-        """异步下载 + 用户/全局限流"""
-        # 用户信号量
+    async def load_emoji(
+        self,
+        url: str,
+        user: str,
+        max_size: int = 100,
+        ttl_seconds: int = TTL_SECONDS
+    ):
+        """异步下载 + 用户/全局限流 + 可指定 TTL"""
+
         if user not in self.user_sems:
             self.user_sems[user] = asyncio.Semaphore(PER_USER_LIMIT)
+
         user_sem = self.user_sems[user]
 
         async with self.global_sem, user_sem:
@@ -130,5 +147,9 @@ class EmojiCache:
                 logger.exception("Exception downloading emoji: %s", e)
                 return None
 
-            key = self.import_emoji_sync(content, max_size)
+            key = self.import_emoji_sync(
+                content,
+                max_size=max_size,
+                ttl_seconds=ttl_seconds
+            )
             return key

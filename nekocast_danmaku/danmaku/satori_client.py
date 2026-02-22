@@ -7,7 +7,7 @@ from satori.client import App, WebsocketsInfo, EventType, Account
 # EventType：事件类型枚举（如消息创建）
 # Account：账号信息
 
-from satori.event import MessageEvent
+from satori.event import MessageEvent, ButtonInteraction
 # MessageEvent：消息事件对象
 
 from satori.element import Text
@@ -126,6 +126,7 @@ async def start_satori_client(
             senderId=str(userid),
             sender=username,
             elements=elements,
+            avatar_url=event.user.avatar,
         )
 
         if danmaku is None:
@@ -167,12 +168,41 @@ async def start_satori_client(
                     danmaku.emote_url,
                 )
                 danmaku.emote_url = emoji_url
+        elif danmaku.type in ("superchat", "gift"):
+            # 尝试缓存头像图片（如果有）
+            if danmaku.avatar_url is not None:
+                avatar_url = await emoji_cache.load_emoji(danmaku.avatar_url, userid, ttl_seconds=3600)
+                if avatar_url is None:
+                    logger.warning(
+                        "头像图片缓存失败，频道: {}, 用户: {}-{}, URL: {}",
+                        danmaku_channel,
+                        userid,
+                        username,
+                        danmaku.avatar_url,
+                    )
+                    # 头像缓存失败不影响弹幕展示，继续处理
+                else:
+                    logger.debug(
+                        "头像图片缓存成功，频道: {}, 用户: {}-{}, URL: {}",
+                        danmaku_channel,
+                        userid,
+                        username,
+                        danmaku.avatar_url,
+                    )
+                    danmaku.avatar_url = avatar_url
         
         # 将弹幕广播到对应分组的所有连接
         await connection_manager.broadcast_to_group(
             danmaku_channel,
             danmaku,
         )
+    
+    @client.register_on(EventType.REACTION_ADDED)
+    async def handle_message_reaction(account: Account, event):
+        pass
+        # logger.debug(
+        #     "{}: {}", type(event), event
+        # )
     
     # =========================
     # 获取群组列表

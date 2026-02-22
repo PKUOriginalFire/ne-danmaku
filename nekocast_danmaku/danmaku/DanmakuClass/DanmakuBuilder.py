@@ -41,7 +41,7 @@ class DanmakuBuilder:
             return None
     
     @staticmethod
-    def create(senderId: str, sender: str, elements: list[Element]) -> DanmakuMessage | None:
+    def create(senderId: str, sender: str, elements: list[Element], avatar_url: str | None) -> DanmakuMessage | None:
         message_type = DanmakuBuilder.classify(elements)
         if message_type is None:
             return None
@@ -80,6 +80,7 @@ class DanmakuBuilder:
                 cost=0,  # 金额信息无法从文本中获取，默认为0
                 senderId=senderId,
                 sender=sender,
+                avatar_url=avatar_url,
                 **sc_info,
             )
         elif message_type == "gift":
@@ -96,6 +97,7 @@ class DanmakuBuilder:
                 senderId=senderId,
                 sender=sender,
                 cost=0,  # 礼物总价值无法从文本中获取，默认为0
+                avatar_url=avatar_url,
                 **gift_info,
             )
         else:
@@ -143,6 +145,7 @@ class DanmakuBuilder:
         cost: int,
         senderId: str | None = None,
         sender: str | None = None,
+        avatar_url: str | None = None,
         is_special: bool = False,
     ) -> SuperChatMessage:
         """构建超级聊天消息"""
@@ -159,6 +162,7 @@ class DanmakuBuilder:
         cost: int,
         senderId: str | None = None,
         sender: str | None = None,
+        avatar_url: str | None = None,
         is_special: bool = False,
     ) -> GiftMessage:
         """构建礼物消息"""

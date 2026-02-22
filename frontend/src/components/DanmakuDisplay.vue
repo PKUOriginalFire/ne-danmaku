@@ -6,7 +6,10 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 // 引入 zod，用于配置参数校验与默认值处理
 import { z } from 'zod'
 // 引入图片缓存系统
-import { EmojiManager, EmojiQueueScheduler } from './EmojiCache'
+import { AssetManager, AssetReadyQueue } from './ResourceManager'
+
+import SuperChatDisplay from './SuperChatDisplay.vue';
+import GiftDisplay from './GiftDisplay.vue';
 
 // 定义组件 props：房间 ID，用于区分弹幕房间
 const props = defineProps({
@@ -28,6 +31,10 @@ const socket = ref(null)
 const reconnectAttempts = ref(0)
 // 弹幕整体透明度（0~1）
 const overlayOpacity = ref(1)
+// SC 显示组件引用 
+const scRef = ref(null)
+// 礼物显示组件引用
+const giftRef = ref(null)
 
 // URL 参数配置的校验与默认值定义
 const configSchema = z.object({
@@ -47,36 +54,85 @@ function getConfig() {
   return configSchema.parse(Object.fromEntries(params))
 }
 
-const emojiManager = new EmojiManager()
+const assetManager = new AssetManager()
+const assetReadyQueue = new AssetReadyQueue(assetManager, {
+  maxConcurrent: 6
+})
 
-const emojiScheduler = new EmojiQueueScheduler(
-  emojiManager,
-  (msg, img) => {
-    // 读取当前配置
-    const config = getConfig()
-    // 使用消息自带字号或默认字号
-    const size = msg.size ?? config.defaultSize
 
-    const payload = {
-      render: function() {
-        img.style.width = `${2*size}px`
-        img.style.height = `${2*size}px`
-        img.style.display = "block"   // 防止 inline 抖动
-        img.style.objectFit = "contain"
-        img.style.opacity = overlayOpacity.value ?? 1
-        return img
-      }
+function handleEmoji(msg) {
+  const task = {
+    id: msg.emote_url,
+    resourceKeys: [`/api/emoji/${msg.emote_url}`],
+    payload: msg,
+    onReady: (payload) => {
+      const img = new Image()
+      img.src = `/api/emoji/${payload.emote_url}`
+      emitEmoji(payload, img)
     }
-
-    danmaku.value.emit(payload)
-  },
-  {
-    maxPerFrame: 6,
-    maxQueueSize: 800,
   }
-)
+  assetReadyQueue.enqueue(task)
+}
 
-emojiScheduler.start()
+function emitEmoji(msg, img) {
+  const config = getConfig()
+  const size = msg.size ?? config.defaultSize
+
+  const payload = {
+    render: function () {
+      img.style.width = `${2 * size}px`
+      img.style.height = `${2 * size}px`
+      img.style.display = "block"   // 防止 inline 抖动
+      img.style.objectFit = "contain"
+      img.style.opacity = overlayOpacity.value ?? 1
+      return img
+    }
+  }
+
+  danmaku.value.emit(payload)
+}
+
+function handleSC(msg) {
+  const task = {
+    id: msg.avatar_url,
+    resourceKeys: [`/api/emoji/${msg.avatar_url}`],
+    payload: msg,
+    onReady: emitSC
+  }
+  assetReadyQueue.enqueue(task)
+}
+
+function emitSC(msg) {
+  scRef.value.addSC({
+    id: msg.sender+msg.text+new Date().getTime(),
+    user: msg.sender,
+    amount: msg.cost,
+    text: msg.text,
+    ttl: msg.duration,
+    avatar: `/api/emoji/${msg.avatar_url}`
+  })
+}
+
+function handleGift(msg) {
+  const task = {
+    id: msg.avatar_url,
+    resourceKeys: [`/api/emoji/${msg.avatar_url}`],
+    payload: msg,
+    onReady: emitGift
+  }
+  assetReadyQueue.enqueue(task)
+}
+
+function emitGift(msg) {
+  giftRef.value.addGift({
+    id: msg.sender+msg.gift_name+new Date().getTime(),
+    user: msg.sender,
+    gift_name: msg.gift_name,
+    quantity: msg.quantity,
+    cost: msg.cost,
+    avatar: `/api/emoji/${msg.avatar_url}`,
+  })
+}
 
 // 向 Danmaku 实例发送一条弹幕
 function sendMessage(msg) {
@@ -93,7 +149,9 @@ function sendMessage(msg) {
   // 使用消息自带pos或默认pos，默认为滚动弹幕
   const mode = msg.position ?? 'rtl'
 
-  if (msg.type === 'plain') {
+  const type = msg.type ?? 'plain'
+
+  if (type === 'plain') {
     // 构造弹幕负载
     const payload = {
       mode: mode,
@@ -112,11 +170,17 @@ function sendMessage(msg) {
 
     // 发射弹幕
     danmaku.value.emit(payload)
-  } else if (msg.type === 'emote') {
-    // 处理表情弹幕，假设 msg.text 是图片 URL
-    emojiScheduler.sendEmote(msg)
+  } else if (type === 'emote') {
+    // 处理表情弹幕
+    handleEmoji(msg)
+  } else if (type === 'superchat') {
+    // 处理 SC 弹幕
+    handleSC(msg)
+  } else if (type === 'gift') {
+    // 处理礼物弹幕
+    handleGift(msg)
   }
-  
+
 }
 
 // 建立 WebSocket 连接
@@ -228,6 +292,8 @@ watch(() => props.roomId, () => {
       <p>加载中...</p>
     </div>
   </div>
+  <SuperChatDisplay ref="scRef" />
+  <GiftDisplay ref="giftRef" />
 </template>
 
 <style scoped>

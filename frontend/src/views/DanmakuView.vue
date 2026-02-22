@@ -18,5 +18,6 @@ const roomId = computed(() => route.params.roomId ?? 'default')
   width: 100vw;
   height: 100vh;
   background: #000;
+  overflow: hidden;
 }
 </style>

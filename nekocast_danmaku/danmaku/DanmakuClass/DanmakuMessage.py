@@ -49,6 +49,7 @@ class EmoteMessage(DanmakuBase):
 class SuperChatMessage(DanmakuBase):
     type: Literal["superchat"] = "superchat"  # 弹幕类型
     text: str                     # 弹幕内容
+    avatar_url: str | None = None    # 头像 URL（可选）
     
     """超级聊天消息结构（继承自 DanmakuMessage）"""
     duration: int               # 显示时长（秒）
@@ -61,6 +62,7 @@ class SuperChatMessage(DanmakuBase):
 class GiftMessage(DanmakuBase):
     """礼物消息结构（继承自 DanmakuMessage）"""
     type: Literal["gift"] = "gift"  # 弹幕类型
+    avatar_url: str | None = None    # 头像 URL（可选）
     
     # gift_name: Literal[...]（未来方向）
     gift_name: str             # 礼物名称
