@@ -2,7 +2,8 @@
 
 > 元火弹幕姬核心
 
-⚠️这个项目完全使用 Claude Code / Codex 生成，未经任何人工修改
+<span style="text-decoration:line-through">⚠️这个项目完全使用 Claude Code / Codex 生成，未经任何人工修改</span>  
+这个项目在上述的基础上，使用ChatGPT以及智人能工进行了修改
 
 ## 使用
 

@@ -1,66 +1,119 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
+// =======================
+// Props 定义
+// =======================
+
+// 组件接收的参数
 const props = defineProps({
+  // 房间 ID，用于区分不同弹幕房间
   roomId: {
     type: String,
-    required: true,
+    required: true, // 必须提供
   },
+  // 上游认证用的密钥
   authKey: {
     type: String,
-    default: '',
+    default: '', // 默认为空字符串
   },
 })
 
+// =======================
+// 响应式状态定义
+// =======================
+
+// 消息显示容器的 DOM 引用
 const containerRef = ref(null)
+// 当前显示的消息列表
 const messages = ref([])
+// 是否处于加载 / 重连状态
 const loading = ref(true)
+// 输入框中的弹幕内容
 const inputValue = ref('')
+// 发送者昵称
 const senderName = ref('元火子')
+// 错误提示文本
 const error = ref('')
+// 客户端（下游）WebSocket 实例
 const clientSocket = ref(null)
+// 客户端 WebSocket 是否已连接
 const clientSocketOk = ref(false)
+// 上游 WebSocket 实例（用于发送弹幕 / 控制指令）
 const upstreamSocket = ref(null)
+// 上游 WebSocket 是否已连接
 const upstreamSocketOk = ref(false)
+// 当前重连尝试次数（客户端与上游共用）
 const reconnectAttempts = ref(0)
+// 实际使用的认证 Token（来自 props.authKey）
 const authToken = ref('')
+// 全局弹幕透明度（0~100）
 const opacityValue = ref(100)
 
+// =======================
+// 常量配置
+// =======================
+
+// 最多保留的消息条数
 const MESSAGE_LIMIT = 100
+// 单条弹幕允许的最大长度
 const MAX_MESSAGE_LENGTH = 50
 
+// =======================
+// 计算属性
+// =======================
+
+// 是否满足发送弹幕的所有条件
 const canSend = computed(() => {
   return upstreamSocket.value
     && clientSocketOk.value
-    && inputValue.value.trim()
-    && senderName.value.trim()
-    && authToken.value.trim()
-    && inputValue.value.length <= MAX_MESSAGE_LENGTH
+    && inputValue.value.trim() // 输入内容不为空
+    && senderName.value.trim() // 发送者名称不为空
+    && authToken.value.trim() // 已通过认证
+    && inputValue.value.length <= MAX_MESSAGE_LENGTH // 长度合法
 })
 
+// 是否存在有效的认证 Token
 const hasAuthKey = computed(() => Boolean(authToken.value))
+// 是否允许发送透明度控制命令（影响 UI 可用性）
 const canSendOpacity = computed(() => upstreamSocketOk.value && hasAuthKey.value)
 
+// =======================
+// 消息显示逻辑
+// =======================
+
+// 将一条消息加入消息列表并滚动到底部
 function showMessage(msg) {
   messages.value.push(msg)
+
+  // 超过最大条数时移除最早的一条
   if (messages.value.length > MESSAGE_LIMIT)
     messages.value.shift()
 
+  // 等待 DOM 更新后滚动到最底部
   nextTick(() => {
     if (containerRef.value)
       containerRef.value.scrollTop = containerRef.value.scrollHeight
   })
 }
 
+// =======================
+// 弹幕与控制指令发送
+// =======================
+
+// 发送普通弹幕消息
 function sendMessage() {
+  // 本地长度校验（防止误发送）
   if (inputValue.value.length > MAX_MESSAGE_LENGTH) {
     error.value = `弹幕长度不能超过${MAX_MESSAGE_LENGTH}字符`
     return
   }
 
+  // 条件不满足时直接返回
   if (!canSend.value)
     return
 
+  // 构造弹幕数据包
   const packet = {
     group: props.roomId,
     danmaku: {
@@ -68,17 +121,25 @@ function sendMessage() {
       sender: senderName.value.trim(),
     },
   }
+
+  // 通过上游 WebSocket 发送
   upstreamSocket.value.send(JSON.stringify(packet))
 
+  // 发送后清理输入状态
   inputValue.value = ''
   error.value = ''
 }
 
+// 发送全局透明度控制命令
 function sendOpacityCommand() {
+  // 条件不满足时直接返回
   if (!canSendOpacity.value || !upstreamSocket.value)
     return
 
+  // 将透明度规范到 0~100 的整数范围
   const normalized = Math.max(0, Math.min(100, Number(opacityValue.value) || 0))
+
+  // 构造控制指令数据包
   const packet = {
     group: props.roomId,
     control: {
@@ -87,65 +148,93 @@ function sendOpacityCommand() {
     },
   }
 
+  // 发送控制指令
   upstreamSocket.value.send(JSON.stringify(packet))
+
+  // 本地显示系统提示
   showMessage({ text: `已设置全局透明度为 ${normalized}%`, source: 'system' })
 }
 
+// =======================
+// 客户端（下游）WebSocket 连接
+// =======================
+
+// 连接用于接收弹幕的客户端 WebSocket
 function connectClientWebSocket() {
+  // 根据当前页面协议选择 ws / wss
   const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
   const wsUrl = `${protocol}${window.location.host}/api/danmaku/v1/danmaku/${props.roomId}`
 
+  // 已经连接则不重复连接
   if (clientSocketOk.value)
     return
 
+  // 若已有 socket，先关闭
   if (clientSocket.value)
     clientSocket.value.close()
 
+  // 创建新的 WebSocket 实例
   clientSocket.value = new WebSocket(wsUrl)
 
+  // 连接成功
   clientSocket.value.onopen = () => {
     checkConnectionStatus()
   }
 
+  // 接收弹幕消息
   clientSocket.value.onmessage = (event) => {
     const data = JSON.parse(event.data)
     showMessage({ ...data, source: 'client' })
   }
 
+  // 连接关闭，尝试指数退避重连
   clientSocket.value.onclose = () => {
     checkConnectionStatus()
-    const reconnectDelay = Math.min(30000, 2 ** reconnectAttempts.value * 1000)
+    const reconnectDelay = Math.min(30000, 2 ** Math.min(reconnectAttempts.value, 10) * 1000)
     setTimeout(connectClientWebSocket, reconnectDelay)
     reconnectAttempts.value++
   }
 
+  // 出错时主动关闭，交由 onclose 处理重连
   clientSocket.value.onerror = () => {
     clientSocket.value?.close()
   }
 }
 
+// =======================
+// 上游 WebSocket 连接
+// =======================
+
+// 连接用于发送弹幕与控制指令的上游 WebSocket
 function connectUpstreamWebSocket() {
+  // 未提供认证 Token 时不连接
   if (!authToken.value)
     return
 
+  // 已连接则不重复连接
   if (upstreamSocketOk.value)
     return
 
   const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
   const wsUrl = `${protocol}${window.location.host}/api/danmaku/v1/upstream?token=${authToken.value}`
 
+  // 若已有 socket，先关闭
   if (upstreamSocket.value)
     upstreamSocket.value.close()
 
+  // 创建新的上游 WebSocket
   upstreamSocket.value = new WebSocket(wsUrl)
 
+  // 连接成功
   upstreamSocket.value.onopen = () => {
     checkConnectionStatus()
   }
 
+  // 接收上游返回的消息
   upstreamSocket.value.onmessage = (event) => {
     const data = JSON.parse(event.data)
 
+    // 上游错误信息直接提示
     if (data.error) {
       showMessage({ text: `上游错误: ${data.error}`, source: 'upstream' })
       return
@@ -154,6 +243,7 @@ function connectUpstreamWebSocket() {
     showMessage({ ...data, source: 'upstream' })
   }
 
+  // 连接关闭后尝试重连（仅在仍有 token 的情况下）
   upstreamSocket.value.onclose = () => {
     checkConnectionStatus()
     if (authToken.value) {
@@ -163,17 +253,25 @@ function connectUpstreamWebSocket() {
     }
   }
 
+  // 上游连接错误（通常是 token 无效）
   upstreamSocket.value.onerror = () => {
     showMessage({ text: '上游连接失败，请检查Token是否正确', source: 'upstream' })
   }
 }
 
+// =======================
+// 连接状态统一管理
+// =======================
+
+// 根据 socket readyState 统一更新连接状态与系统提示
 function checkConnectionStatus() {
   const clientConnected = clientSocket.value && clientSocket.value.readyState === WebSocket.OPEN
   clientSocketOk.value = Boolean(clientConnected)
+
   const upstreamConnected = upstreamSocket.value && upstreamSocket.value.readyState === WebSocket.OPEN
   upstreamSocketOk.value = Boolean(upstreamConnected)
 
+  // 任一连接成功即认为系统可用
   if (clientConnected || upstreamConnected) {
     if (loading.value) {
       loading.value = false
@@ -191,6 +289,7 @@ function checkConnectionStatus() {
       })
     }
   }
+  // 两端都断开
   else {
     loading.value = true
     showMessage({
@@ -200,23 +299,35 @@ function checkConnectionStatus() {
   }
 }
 
+// =======================
+// WebSocket 统一入口
+// =======================
+
+// 初始化并连接客户端与上游 WebSocket
 function connectWebSocket() {
   loading.value = true
   connectClientWebSocket()
   connectUpstreamWebSocket()
 }
 
+// =======================
+// Watchers
+// =======================
+
+// 输入变化时清除错误提示
 watch(inputValue, () => {
   if (error.value)
     error.value = ''
 })
 
+// 同步 props.authKey 到内部 authToken
 watch(() => props.authKey, (value) => {
   const normalized = typeof value === 'string' ? value.trim() : ''
   if (normalized !== authToken.value)
     authToken.value = normalized
 }, { immediate: true })
 
+// authToken 变化时自动管理上游连接
 watch(authToken, () => {
   if (authToken.value) {
     connectUpstreamWebSocket()
@@ -226,10 +337,16 @@ watch(authToken, () => {
   }
 })
 
+// =======================
+// 生命周期
+// =======================
+
+// 组件挂载时建立连接
 onMounted(() => {
   connectWebSocket()
 })
 
+// 组件卸载时关闭所有连接
 onUnmounted(() => {
   clientSocket.value?.close()
   upstreamSocket.value?.close()
