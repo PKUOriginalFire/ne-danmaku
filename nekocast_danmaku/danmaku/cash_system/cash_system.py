@@ -44,7 +44,7 @@ class CashSQL:
     '''
     现金系统的数据库，实际上直接采用dict来模拟，后续可以替换为真正的数据库。
     '''
-    def __init__(self, users: dict[str, User] = None):
+    def __init__(self, users: dict[str, User] | None = None):
         self.users = users if users is not None else {}
     
     def get_user(self, user_id: str) -> User | None:
@@ -78,9 +78,9 @@ class CashSystem:
     '''
     def __init__(self, users: list[str]):
         self.sql = CashSQL()
-        self.init_users(users)
+        self.init_users_from_groups(users)
     
-    def init_user_from_groups(self, users: list[str]) -> None:
+    def init_users_from_groups(self, users: list[str]) -> None:
         '''
         从分组列表中初始化用户数据。
         '''

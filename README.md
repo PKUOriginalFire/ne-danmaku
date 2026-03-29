@@ -3,7 +3,6 @@
 > 元火弹幕姬核心
 
 <span style="text-decoration:line-through">⚠️这个项目完全使用 Claude Code / Codex 生成，未经任何人工修改</span>  
-这个项目在上述的基础上，使用ChatGPT以及智人能工进行了修改
 
 ## 使用
 
@@ -40,4 +39,4 @@ uv run main.py
 服务会在对应的端口启动 HTTP 服务
 
 - `/danmaku/房间名` 为弹幕网页，管理、咕咕嘎嘎、B 站弹幕均会显示在此页面，可以直接添加到 OBS
-- `/danmaku/chat/房间名?key=密钥` 为管理端发送弹幕的接口，在这里也能实时调整弹幕姬透明度
+- `/danmaku/chat/房间名?key=密钥` 为管理端发送弹幕和动态配置房间设置（透明度、emoji、superchat、gift、置顶/置底定位开关）的界面

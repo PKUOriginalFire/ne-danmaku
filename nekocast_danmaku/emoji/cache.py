@@ -5,7 +5,6 @@ from typing import Dict
 from PIL import Image, ImageSequence
 import io
 
-from fastapi import HTTPException
 import httpx
 import hashlib
 
@@ -81,11 +80,12 @@ class EmojiCache:
         """同步处理图片 -> 返回 key"""
 
         img = Image.open(io.BytesIO(content))
-        is_animated = getattr(img, "is_animated", False)
+        frames = [frame.copy() for frame in ImageSequence.Iterator(img)]
+        is_animated = len(frames) > 1
 
         # 静态图片
         if not is_animated:
-            img.thumbnail((max_size, max_size), Image.LANCZOS)
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
             output = io.BytesIO()
             img.save(output, format="WEBP", quality=80, method=6)
             content_resized = output.getvalue()
@@ -93,18 +93,18 @@ class EmojiCache:
 
         # 动态 GIF
         else:
-            frames = []
-            for frame in ImageSequence.Iterator(img):
-                frame = frame.convert("RGBA")
-                frame.thumbnail((max_size, max_size), Image.LANCZOS)
-                frames.append(frame)
+            processed_frames = []
+            for frame in frames:
+                converted = frame.convert("RGBA")
+                converted.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                processed_frames.append(converted)
 
             output = io.BytesIO()
-            frames[0].save(
+            processed_frames[0].save(
                 output,
                 format="WEBP",
                 save_all=True,
-                append_images=frames[1:],
+                append_images=processed_frames[1:],
                 loop=img.info.get("loop", 0),
                 duration=img.info.get("duration", 100),
                 quality=80,

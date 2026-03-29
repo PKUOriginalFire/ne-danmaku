@@ -1,0 +1,1 @@
+"""Cash system package."""

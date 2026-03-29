@@ -1,26 +1,31 @@
 import re
-from typing import Literal, Any
+from typing import Literal
 
 from satori.element import Element, Text, Image
 
-from .DanmakuMessage import *
-
-SC_PATTERN = re.compile(
-    r"^/sc(?:\s+(?P<duration>\d+))?\s+(?P<text>.+)$",
-    re.IGNORECASE
+from .danmaku_message import (
+    PlainDanmakuMessage,
+    EmoteMessage,
+    SuperChatMessage,
+    GiftMessage,
+    DanmakuMessage,
 )
 
+SC_PATTERN = re.compile(r"^/sc(?:\s+(?P<duration>\d+))?\s+(?P<text>.+)$", re.IGNORECASE)
+
 GIFT_PATTERN = re.compile(
-    r"^/gift\s+(?P<gift_name>.+?)(?:\s+(?P<quantity>\d+))?\s*$",
-    re.IGNORECASE
+    r"^/gift\s+(?P<gift_name>.+?)(?:\s+(?P<quantity>\d+))?\s*$", re.IGNORECASE
 )
 
 POSITION_RE = re.compile(r"/(?:置顶|置底)\s+", re.IGNORECASE)
 COLOR_RE = re.compile(r"\#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\s+", re.IGNORECASE)
 
+
 class DanmakuBuilder:
     @staticmethod
-    def classify(elements: list[Element]) -> Literal["plain", "emote", "superchat", "gift"] | None:
+    def classify(
+        elements: list[Element],
+    ) -> Literal["plain", "emote", "superchat", "gift"] | None:
         first_element = elements[0] if elements else None
         if isinstance(first_element, Image):
             if len(elements) != 1:
@@ -30,7 +35,7 @@ class DanmakuBuilder:
             text = first_element.text.lower()
             if not all(isinstance(i, Text) for i in elements):
                 return None
-            
+
             if SC_PATTERN.match(text):
                 return "superchat"
             elif GIFT_PATTERN.match(text):
@@ -39,16 +44,18 @@ class DanmakuBuilder:
                 return "plain"
         else:
             return None
-    
+
     @staticmethod
-    def create(senderId: str, sender: str, elements: list[Element], avatar_url: str | None) -> DanmakuMessage | None:
+    def create(
+        senderId: str, sender: str, elements: list[Element], avatar_url: str | None
+    ) -> DanmakuMessage | None:
         message_type = DanmakuBuilder.classify(elements)
         if message_type is None:
             return None
-        
+
         if message_type == "plain":
             text = "".join(i.text for i in elements if isinstance(i, Text)).strip()
-            constructed = parse_command(text)
+            constructed: dict | None = parse_command(text)
             if constructed is None:
                 constructed = {
                     "text": text,
@@ -59,6 +66,8 @@ class DanmakuBuilder:
                 **constructed,
             )
         elif message_type == "emote":
+            if not isinstance(elements[0], Image):
+                return None
             emote_url = elements[0].src
             return EmoteMessage(
                 emote_url=emote_url,
@@ -68,7 +77,6 @@ class DanmakuBuilder:
         elif message_type == "superchat":
             text = "".join(i.text for i in elements if isinstance(i, Text)).strip()
             sc_info = parse_sc(text)
-            print(sc_info)
             if sc_info is None:
                 # 总可以构建成普通弹幕
                 return PlainDanmakuMessage(
@@ -84,6 +92,8 @@ class DanmakuBuilder:
                 **sc_info,
             )
         elif message_type == "gift":
+            if not isinstance(elements[0], Text):
+                return None
             text = elements[0].text.strip()
             gift_info = parse_gift(text)
             if gift_info is None:
@@ -102,82 +112,11 @@ class DanmakuBuilder:
             )
         else:
             return None
-    
-    @staticmethod
-    def plain(
-        text: str,
-        senderId: str | None = None,
-        sender: str | None = None,
-        color: str | None = None,
-        size: int | None = None,
-        is_special: bool = False,
-        position: Literal["top", "bottom", "scroll"] = 'scroll',
-    ) -> PlainDanmakuMessage:
-        """构建普通弹幕消息"""
-        return PlainDanmakuMessage(
-            text=text,
-            senderId=senderId,
-            sender=sender,
-            color=color,
-            size=size,
-            is_special=is_special,
-            position=position,
-        )
-    
-    @staticmethod
-    def emote(
-        emote_url: str,
-        senderId: str | None = None,
-        sender: str | None = None,
-        is_special: bool = False,
-    ) -> EmoteMessage:
-        """构建表情包消息"""
-        return EmoteMessage(
-            emote_url=emote_url,
-            senderId=senderId,
-            sender=sender,
-            is_special=is_special,
-        )
-    
-    @staticmethod
-    def superchat(
-        duration: int,
-        cost: int,
-        senderId: str | None = None,
-        sender: str | None = None,
-        avatar_url: str | None = None,
-        is_special: bool = False,
-    ) -> SuperChatMessage:
-        """构建超级聊天消息"""
-        return SuperChatMessage(
-            duration=duration,
-            cost=cost,
-            senderId=senderId,
-            sender=sender,
-            is_special=is_special,
-        )
-    
-    @staticmethod
-    def gift(
-        cost: int,
-        senderId: str | None = None,
-        sender: str | None = None,
-        avatar_url: str | None = None,
-        is_special: bool = False,
-    ) -> GiftMessage:
-        """构建礼物消息"""
-        return GiftMessage(
-            cost=cost,
-            senderId=senderId,
-            sender=sender,
-            is_special=is_special,
-        )
-
 
 # ===========================
 # 工具函数
 # ===========================
-def parse_command(raw: str):
+def parse_command(raw: str, bind_position: bool = True):
     s = raw
 
     position = None
@@ -198,15 +137,15 @@ def parse_command(raw: str):
     # token 的 span
     spans = [m.span() for _, m in tokens]
     start = min(a for a, _ in spans)
-    end   = max(b for _, b in spans)
+    end = max(b for _, b in spans)
 
     # 判断是不是“整体在头或尾”
     stripped = s.strip()
 
     if stripped.startswith(s[start:end]):
-        text = s[end:]      # ← 原样切
+        text = s[end:]  # ← 原样切
     elif stripped.endswith(s[start:end]):
-        text = s[:start]    # ← 原样切
+        text = s[:start]  # ← 原样切
     else:
         return None  # 不符合你的约束
 
@@ -218,17 +157,18 @@ def parse_command(raw: str):
             color = m.group().strip()  # 保留原始颜色值，去掉空格
 
     if position is None:
-        position = 'rtl'  # 默认滚动
+        position = "scroll"  # 默认滚动
     elif position == "置顶":
-        position = "top"
+        position = "top" if bind_position else "scroll"
     elif position == "置底":
-        position = "bottom"
-    
+        position = "bottom" if bind_position else "scroll"
+
     return {
         "position": position,
         "color": color,
         "text": text,
     }
+
 
 def parse_gift(raw: str):
     m = GIFT_PATTERN.match(raw)
@@ -240,7 +180,8 @@ def parse_gift(raw: str):
         "gift_name": gift_name,
         "quantity": int(quantity) if quantity is not None else 1,  # 默认 1
     }
-    
+
+
 def parse_sc(raw: str):
     m = SC_PATTERN.match(raw)
     if not m:
@@ -249,7 +190,7 @@ def parse_sc(raw: str):
     duration = m.group("duration")
     if duration is None:
         duration = 10
-    
+
     return {
         "duration": int(duration),
         "text": m.group("text"),  # 保留原始空格

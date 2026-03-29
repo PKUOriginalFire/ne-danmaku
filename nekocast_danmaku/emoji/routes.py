@@ -1,9 +1,5 @@
-import hashlib
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
-
-from .cache import EmojiCache
 
 router = APIRouter()
 

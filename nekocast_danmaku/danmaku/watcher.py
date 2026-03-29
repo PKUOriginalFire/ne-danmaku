@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from watchdog.observers import Observer
-from watchdog.observers.api import BaseObserver
 from watchdog.events import FileSystemEventHandler
 
 from loguru import logger
@@ -36,7 +36,7 @@ class _BlacklistFileHandler(FileSystemEventHandler):
         参数:
             event (FileSystemEvent): 文件系统事件对象。
         """
-        path = Path(event.src_path)  # 获取被修改的文件路径
+        path = Path(os.fsdecode(event.src_path))  # 获取被修改的文件路径
 
         # 检查被修改的文件是否为黑名单文件之一
         if path == self.pattern_file or path == self.user_file:
@@ -52,7 +52,7 @@ def start_blacklist_watcher(
     handler = _BlacklistFileHandler(service, pattern_file, user_file)
 
     observer = Observer()
-    observer.schedule(handler, pattern_file.parent, recursive=False)
+    observer.schedule(handler, pattern_file.parent.as_posix(), recursive=False)
     observer.start()
 
     logger.info("Started blacklist watcher")

@@ -165,7 +165,12 @@ def register_event_handlers(app: FastAPI, config: AppConfig) -> None:
 async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
     # 启动弹幕子系统（连接管理、过滤器、上游客户端）
 
-    from .danmaku.models import ConnectionManager, DanmakuFilter, BlacklistService
+    from .danmaku.models import (
+        ConnectionManager,
+        DanmakuFilter,
+        BlacklistService,
+        RoomSettingsService,
+    )
     from .danmaku.watcher import start_blacklist_watcher
     
     # 延迟导入，避免启动阶段的循环依赖
@@ -189,8 +194,10 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
     )
 
     # 创建 WebSocket 连接管理器
+    room_settings_service = RoomSettingsService()
     connection_manager = ConnectionManager(
         danmaku_filter=danmaku_filter,
+        room_settings_service=room_settings_service,
     )
 
     # 挂载到 app.state，供路由和其他模块使用

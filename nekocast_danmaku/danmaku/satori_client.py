@@ -7,11 +7,8 @@ from satori.client import App, WebsocketsInfo, EventType, Account
 # EventType：事件类型枚举（如消息创建）
 # Account：账号信息
 
-from satori.event import MessageEvent, ButtonInteraction
+from satori.event import MessageEvent
 # MessageEvent：消息事件对象
-
-from satori.element import Text
-# Text：消息中的文本元素（Satori 的消息是“元素列表”）
 
 from launart import Launart
 # Launart：异步组件生命周期管理框架（Satori 官方推荐）
@@ -20,14 +17,14 @@ from graia.amnesia.builtins.aiohttp import AiohttpClientService
 # Aiohttp 客户端服务，用于 WebSocket / HTTP 底层通信
 
 from asyncio import create_task, Task
-import regex
 from loguru import logger
 
 from ..config import SatoriConfig
 # Satori 的配置结构
 
-from .models import ConnectionManager, DanmakuMessage
-from .DanmakuClass.DanmakuBuilder import DanmakuBuilder
+from .models import ConnectionManager
+from .danmaku_class.danmaku_builder import DanmakuBuilder
+from .danmaku_class.danmaku_message import EmoteMessage, GiftMessage, SuperChatMessage
 # ConnectionManager：本地弹幕连接管理器
 # DanmakuMessage：统一的弹幕消息数据结构
 
@@ -147,7 +144,7 @@ async def start_satori_client(
                 danmaku,
             )
         
-        if danmaku.type == "emote":
+        if isinstance(danmaku, EmoteMessage):
             # 如果是表情消息，尝试缓存表情图片
             emoji_url = await emoji_cache.load_emoji(danmaku.emote_url, userid)
             if emoji_url is None:
@@ -168,7 +165,7 @@ async def start_satori_client(
                     danmaku.emote_url,
                 )
                 danmaku.emote_url = emoji_url
-        elif danmaku.type in ("superchat", "gift"):
+        elif isinstance(danmaku, (SuperChatMessage, GiftMessage)):
             # 尝试缓存头像图片（如果有）
             if danmaku.avatar_url is not None:
                 avatar_url = await emoji_cache.load_emoji(danmaku.avatar_url, userid, ttl_seconds=3600)
@@ -199,10 +196,10 @@ async def start_satori_client(
     
     @client.register_on(EventType.REACTION_ADDED)
     async def handle_message_reaction(account: Account, event):
-        pass
         # logger.debug(
         #     "{}: {}", type(event), event
         # )
+        _ = (account, event)
     
     # =========================
     # 获取群组列表
@@ -223,12 +220,15 @@ async def start_satori_client(
                     guild.name,
                 )
                 async for user in account.guild_member_list(guild.id):
+                    member_user = user.user
+                    if member_user is None:
+                        continue
                     logger.debug(
                         "获取到频道成员，频道 ID: {}, 用户名: {}",
                         guild.id,
-                        user.user.name
+                        member_user.name
                     )
-                    users.add(user.user.id)
+                    users.add(member_user.id)
             else:
                 logger.debug(
                     "获取到未配置的频道，频道 ID: {}, 频道名称: {}",

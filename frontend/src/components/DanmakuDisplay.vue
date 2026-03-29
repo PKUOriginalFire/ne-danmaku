@@ -1,17 +1,12 @@
 <script setup>
-// 引入第三方弹幕库
 import Danmaku from 'danmaku'
-// 引入 Vue 组合式 API
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-// 引入 zod，用于配置参数校验与默认值处理
 import { z } from 'zod'
-// 引入图片缓存系统
 import { AssetManager, AssetReadyQueue } from './ResourceManager'
 
-import SuperChatDisplay from './SuperChatDisplay.vue';
-import GiftDisplay from './GiftDisplay.vue';
+import SuperChatDisplay from './SuperChatDisplay.vue'
+import GiftDisplay from './GiftDisplay.vue'
 
-// 定义组件 props：房间 ID，用于区分弹幕房间
 const props = defineProps({
   roomId: {
     type: String,
@@ -19,36 +14,29 @@ const props = defineProps({
   },
 })
 
-// 弹幕容器 DOM 引用
 const containerRef = ref(null)
-// 是否处于加载/重连状态
 const loading = ref(true)
-// Danmaku 实例引用
 const danmaku = ref(null)
-// WebSocket 实例引用
 const socket = ref(null)
-// 当前重连次数
 const reconnectAttempts = ref(0)
-// 弹幕整体透明度（0~1）
 const overlayOpacity = ref(1)
-// SC 显示组件引用 
 const scRef = ref(null)
-// 礼物显示组件引用
 const giftRef = ref(null)
+const roomSettings = ref({
+  overlay_opacity: 100,
+  enable_emoji: true,
+  enable_superchat: true,
+  enable_gift: true,
+  bind_position: true,
+})
 
-// URL 参数配置的校验与默认值定义
 const configSchema = z.object({
-  // 默认弹幕颜色
   defaultColor: z.string().catch('white'),
-  // 默认字体大小（px）
   defaultSize: z.coerce.number().catch(40),
-  // 弹幕速度
   speed: z.coerce.number().catch(144),
-  // 字体族
   font: z.string().catch('sans-serif'),
 })
 
-// 从 URL query 中读取配置并解析为合法配置对象
 function getConfig() {
   const params = new URLSearchParams(window.location.search)
   return configSchema.parse(Object.fromEntries(params))
@@ -56,11 +44,24 @@ function getConfig() {
 
 const assetManager = new AssetManager()
 const assetReadyQueue = new AssetReadyQueue(assetManager, {
-  maxConcurrent: 6
+  maxConcurrent: 6,
 })
 
+function applyRoomSettings(settings) {
+  roomSettings.value = {
+    overlay_opacity: Number(settings?.overlay_opacity ?? 100),
+    enable_emoji: Boolean(settings?.enable_emoji ?? true),
+    enable_superchat: Boolean(settings?.enable_superchat ?? true),
+    enable_gift: Boolean(settings?.enable_gift ?? true),
+    bind_position: Boolean(settings?.bind_position ?? true),
+  }
+  const value = Math.max(0, Math.min(100, roomSettings.value.overlay_opacity))
+  overlayOpacity.value = value / 100
+}
 
 function handleEmoji(msg) {
+  if (!roomSettings.value.enable_emoji)
+    return
   const task = {
     id: msg.emote_url,
     resourceKeys: [`/api/emoji/${msg.emote_url}`],
@@ -69,7 +70,7 @@ function handleEmoji(msg) {
       const img = new Image()
       img.src = `/api/emoji/${payload.emote_url}`
       emitEmoji(payload, img)
-    }
+    },
   }
   assetReadyQueue.enqueue(task)
 }
@@ -79,53 +80,57 @@ function emitEmoji(msg, img) {
   const size = msg.size ?? config.defaultSize
 
   const payload = {
-    render: function () {
+    render: () => {
       img.style.width = `${2 * size}px`
       img.style.height = `${2 * size}px`
-      img.style.display = "block"   // 防止 inline 抖动
-      img.style.objectFit = "contain"
+      img.style.display = 'block'
+      img.style.objectFit = 'contain'
       img.style.opacity = overlayOpacity.value ?? 1
       return img
-    }
+    },
   }
 
   danmaku.value.emit(payload)
 }
 
 function handleSC(msg) {
+  if (!roomSettings.value.enable_superchat)
+    return
   const task = {
     id: msg.avatar_url,
     resourceKeys: [`/api/emoji/${msg.avatar_url}`],
     payload: msg,
-    onReady: emitSC
+    onReady: emitSC,
   }
   assetReadyQueue.enqueue(task)
 }
 
 function emitSC(msg) {
   scRef.value.addSC({
-    id: msg.sender+msg.text+new Date().getTime(),
+    id: msg.sender + msg.text + new Date().getTime(),
     user: msg.sender,
     amount: msg.cost,
     text: msg.text,
     ttl: msg.duration,
-    avatar: `/api/emoji/${msg.avatar_url}`
+    avatar: `/api/emoji/${msg.avatar_url}`,
   })
 }
 
 function handleGift(msg) {
+  if (!roomSettings.value.enable_gift)
+    return
   const task = {
     id: msg.avatar_url,
     resourceKeys: [`/api/emoji/${msg.avatar_url}`],
     payload: msg,
-    onReady: emitGift
+    onReady: emitGift,
   }
   assetReadyQueue.enqueue(task)
 }
 
 function emitGift(msg) {
   giftRef.value.addGift({
-    id: msg.sender+msg.gift_name+new Date().getTime(),
+    id: msg.sender + msg.gift_name + new Date().getTime(),
     user: msg.sender,
     gift_name: msg.gift_name,
     quantity: msg.quantity,
@@ -134,141 +139,104 @@ function emitGift(msg) {
   })
 }
 
-// 向 Danmaku 实例发送一条弹幕
+function resolveMode(msg) {
+  const incoming = msg.position
+  if (!roomSettings.value.bind_position)
+    return 'rtl'
+  if (incoming === 'top' || incoming === 'bottom' || incoming === 'rtl')
+    return incoming
+  if (incoming === 'scroll')
+    return 'rtl'
+  return 'rtl'
+}
+
 function sendMessage(msg) {
-  // 未初始化弹幕实例时直接返回
   if (!danmaku.value)
     return
 
-  // 读取当前配置
   const config = getConfig()
-  // 使用消息自带颜色或默认颜色
   const color = msg.color ?? config.defaultColor
-  // 使用消息自带字号或默认字号
   const size = msg.size ?? config.defaultSize
-  // 使用消息自带pos或默认pos，默认为滚动弹幕
-  const mode = msg.position ?? 'rtl'
-
+  const mode = resolveMode(msg)
   const type = msg.type ?? 'plain'
 
   if (type === 'plain') {
-    // 构造弹幕负载
     const payload = {
-      mode: mode,
+      mode,
       text: msg.text,
       style: {
         fontFamily: config.font,
         fontSize: `${size}px`,
         fontWeight: 'bold',
         color,
-        // 描边阴影，增强可读性
         textShadow: '#000 1px 0px 1px, #000 0px 1px 1px, #000 0px -1px 1px, #000 -1px 0px 1px',
-        // 使用当前全局透明度
         opacity: overlayOpacity.value ?? 1,
       },
     }
-
-    // 发射弹幕
     danmaku.value.emit(payload)
-  } else if (type === 'emote') {
-    // 处理表情弹幕
+  }
+  else if (type === 'emote') {
     handleEmoji(msg)
-  } else if (type === 'superchat') {
-    // 处理 SC 弹幕
+  }
+  else if (type === 'superchat') {
     handleSC(msg)
-  } else if (type === 'gift') {
-    // 处理礼物弹幕
+  }
+  else if (type === 'gift') {
     handleGift(msg)
   }
-
 }
 
-// 建立 WebSocket 连接
 function connectWebSocket() {
-  // 根据当前协议选择 ws / wss
   const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
-  // 拼接弹幕 WebSocket 地址
   const wsUrl = `${protocol}${window.location.host}/api/danmaku/v1/danmaku/${props.roomId}`
 
-  // 创建 WebSocket 实例
   socket.value = new WebSocket(wsUrl)
-
-  // 连接成功回调
   socket.value.onopen = () => {
     reconnectAttempts.value = 0
     loading.value = false
-    // 发送系统提示弹幕
     sendMessage({ text: '元火弹幕姬已连接~' })
   }
-
-  // 接收消息回调
   socket.value.onmessage = (event) => {
     const data = JSON.parse(event.data)
-
-    // 控制消息：设置弹幕透明度
-    if (data?.control?.type === 'setOpacity') {
-      const value = Math.max(0, Math.min(100, Number(data.control.value) || 0))
-      overlayOpacity.value = value / 100
+    if (data?.type === 'settings' && data?.settings) {
+      applyRoomSettings(data.settings)
       return
     }
-
-    // 普通弹幕消息
     sendMessage(data)
   }
-
-  // 连接关闭回调
   socket.value.onclose = () => {
     loading.value = true
-    // 发送断开提示弹幕
     sendMessage({ text: '元火弹幕姬已断开~' })
-
-    // 指数退避重连，最大 30 秒
     const reconnectDelay = Math.min(30000, 2 ** reconnectAttempts.value * 1000)
     setTimeout(connectWebSocket, reconnectDelay)
     reconnectAttempts.value++
   }
-
-  // 发生错误时主动关闭连接，触发 onclose 重连逻辑
   socket.value.onerror = () => {
     socket.value.close()
   }
 }
 
-// 初始化 Danmaku 实例
 function initDanmaku() {
-  // 容器未挂载时直接返回
   if (!containerRef.value)
     return
-
-  // 读取配置
   const config = getConfig()
-  // 创建 Danmaku 实例
   danmaku.value = new Danmaku({
     container: containerRef.value,
     engine: 'dom',
     speed: config.speed,
   })
-  // 显示弹幕
   danmaku.value.show()
 
-  // 窗口尺寸变化时同步调整弹幕尺寸
   const handleResize = () => danmaku.value?.resize()
   window.addEventListener('resize', handleResize)
-
-  // 返回清理函数
   return () => {
     window.removeEventListener('resize', handleResize)
   }
 }
 
-// 组件挂载时执行
 onMounted(() => {
-  // 初始化弹幕并获取清理函数
   const cleanup = initDanmaku()
-  // 建立 WebSocket 连接
   connectWebSocket()
-
-  // 组件卸载时清理资源
   onUnmounted(() => {
     cleanup?.()
     socket.value?.close()
@@ -276,14 +244,12 @@ onMounted(() => {
   })
 })
 
-// 监听房间 ID 变化，切换弹幕房间
 watch(() => props.roomId, () => {
   socket.value?.close()
-  overlayOpacity.value = 1
+  applyRoomSettings({})
   connectWebSocket()
 })
 </script>
-
 
 <template>
   <div ref="containerRef" class="danmaku-container">

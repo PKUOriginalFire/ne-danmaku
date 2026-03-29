@@ -2,16 +2,16 @@
 负责：
 - 上游（管理端 / 控制端）WebSocket 接入
 - 前端客户端 WebSocket 接入
-- 弹幕与控制指令的转发
+- 弹幕转发与房间设置管理
 """
 
 import json
-from fastapi import WebSocket, WebSocketDisconnect, Query, APIRouter
+from fastapi import WebSocket, WebSocketDisconnect, Query, APIRouter, HTTPException, Request
 from hmac import compare_digest
 from loguru import logger
 
 from ..config import DanmakuConfig
-from .models import ConnectionManager, DanmakuPacket
+from .models import ConnectionManager, DanmakuPacket, RoomSettings
 
 
 def create_router(config: DanmakuConfig) -> APIRouter:
@@ -35,17 +35,45 @@ def create_router(config: DanmakuConfig) -> APIRouter:
         """弹幕服务健康检查接口"""
         return {"message": "弹幕服务运行中", "version": "0.1.0"}
 
+    def validate_admin_token(token: str | None):
+        if not token:
+            raise HTTPException(status_code=401, detail="Missing admin token")
+        if not config.upstream or not compare_digest(token.strip(), config.upstream.token):
+            raise HTTPException(status_code=403, detail="Invalid admin token")
+
+    @router.get("/admin/rooms/{group}/settings")
+    async def get_room_settings(request: Request, group: str, token: str = Query(None)):
+        validate_admin_token(token)
+        connection_manager: ConnectionManager = request.app.state.danmaku_manager
+        assert connection_manager.room_settings_service is not None
+        return connection_manager.room_settings_service.get(group).model_dump()
+
+    @router.put("/admin/rooms/{group}/settings")
+    async def update_room_settings(
+        request: Request,
+        group: str,
+        settings: RoomSettings,
+        token: str = Query(None),
+    ):
+        validate_admin_token(token)
+        connection_manager: ConnectionManager = request.app.state.danmaku_manager
+        assert connection_manager.room_settings_service is not None
+        updated = connection_manager.room_settings_service.update(group, settings)
+        await connection_manager.broadcast_room_settings(group)
+        return updated.model_dump()
+
     @router.websocket("/upstream")
     async def upstream_websocket(websocket: WebSocket, token: str = Query(None)):
         """上游弹幕 WebSocket
         
         用途：
-        - 接收管理端 / 控制端发送的弹幕与控制指令
+        - 接收管理端 / 控制端发送的弹幕
         - 需要通过 token 鉴权
         """
         
         # 从 FastAPI 应用状态中获取连接管理器
         request = websocket.scope.get("app")
+        assert request is not None
         connection_manager: ConnectionManager = request.state.danmaku_manager
         
         # 未提供 token，直接拒绝连接
@@ -70,15 +98,8 @@ def create_router(config: DanmakuConfig) -> APIRouter:
                 data = await websocket.receive_text()
 
                 try:
-                    # 解析为 DanmakuPacket（包含弹幕或控制指令）
+                    # 解析为 DanmakuPacket（仅弹幕）
                     packet = DanmakuPacket.model_validate_json(data)
-
-                    # 如果是控制指令（如透明度控制）
-                    if packet.control:
-                        await connection_manager.broadcast_control(
-                            packet.group, packet.control
-                        )
-                        continue
 
                     # 上游发送的弹幕统一标记为特殊弹幕
                     packet.danmaku.is_special = True
@@ -110,6 +131,7 @@ def create_router(config: DanmakuConfig) -> APIRouter:
         """
         # 从 FastAPI 应用状态中获取连接管理器
         request = websocket.scope.get("app")
+        assert request is not None
         connection_manager: ConnectionManager = request.state.danmaku_manager
         
         # 客户端加入指定弹幕组

@@ -9,42 +9,68 @@ import json
 import regex
 import time
 from collections import defaultdict, deque
-from typing import Literal, Annotated, Optional
+from typing import Any, Optional
 from pathlib import Path
 
 from fastapi import WebSocket
 from loguru import logger
-from pydantic import BaseModel, model_validator, Field
+from pydantic import BaseModel, model_validator
 
-from .DanmakuClass.DanmakuMessage import *
-from .DanmakuClass.DanmakuControl import *
+from .danmaku_class.danmaku_message import (
+    DanmakuMessage,
+    EmoteMessage,
+    GiftMessage,
+    PlainDanmakuMessage,
+    SuperChatMessage,
+)
 
 # =========================
 # 上游传输数据包
 # =========================
 
+
 class DanmakuPacket(BaseModel):
     """上游弹幕数据包结构
-    
-    一个包只能是：
-    - 一条弹幕
-    - 或一条控制指令
+
+    一个包只能是一条弹幕。
     """
 
-    group: str                              # 弹幕分组 / 频道
-    danmaku: DanmakuMessage | None = None  # 弹幕内容
-    control: DanmakuControl | None = None  # 控制指令
+    group: str  # 弹幕分组 / 频道
+    danmaku: DanmakuMessage
+
+class RoomSettings(BaseModel):
+    """每个房间的动态弹幕设置。"""
+
+    overlay_opacity: float = 100.0
+    enable_emoji: bool = True
+    enable_superchat: bool = True
+    enable_gift: bool = True
+    bind_position: bool = True
 
     @model_validator(mode="after")
-    def ensure_payload(self):
-        """保证至少存在 danmaku 或 control"""
-        if not self.danmaku and not self.control:
-            raise ValueError("Packet must include danmaku or control payload")
+    def clamp_values(self):
+        self.overlay_opacity = max(0.0, min(100.0, self.overlay_opacity))
         return self
+
+
+class RoomSettingsService:
+    """管理每个 room 的可动态更新设置。"""
+
+    def __init__(self):
+        self._settings: dict[str, RoomSettings] = {}
+
+    def get(self, group: str) -> RoomSettings:
+        return self._settings.get(group, RoomSettings())
+
+    def update(self, group: str, settings: RoomSettings) -> RoomSettings:
+        self._settings[group] = settings
+        return settings
+
 
 # =========================
 # 弹幕过滤器
 # =========================
+
 
 class BlacklistService:
     """
@@ -61,8 +87,8 @@ class BlacklistService:
 
         # 禁止用户 ID
         self._forbidden_users: set[str] = set()
-        
-        self.watchdog = None  # 文件监视器（外部设置）
+
+        self.watchdog: Any = None  # 文件监视器（外部设置）
 
     # =========================
     # 加载 / 重载
@@ -104,31 +130,49 @@ class BlacklistService:
             return True
 
         # ---------- 用户昵称黑名单（按照文本匹配） ----------
-        if message.type in ('superchat', 'gift') and message.sender:
+        if isinstance(message, (SuperChatMessage, GiftMessage)) and message.sender:
             for pattern in self._patterns:
                 if pattern.search(message.sender):
-                    logger.info("Message blocked by forbidden sender name: {}, triggered by pattern: {}", message.sender, pattern.pattern)
+                    logger.info(
+                        "Message blocked by forbidden sender name: {}, triggered by pattern: {}",
+                        message.sender,
+                        pattern.pattern,
+                    )
                     # 替换敏感词
-                    message.sender = pattern.sub(lambda m: '*' * len(m.group(0)), message.sender)
+                    message.sender = pattern.sub(
+                        lambda m: "*" * len(m.group(0)), message.sender
+                    )
                     # return True  # 你可以选择是否过滤整条消息
-        
+
         # ---------- 文本黑名单 ----------
-        text = getattr(message, "text", None)
+        if isinstance(message, (PlainDanmakuMessage, SuperChatMessage)):
+            text = message.text
+        else:
+            return False
+
         if not text:
             return False
 
         for pattern in self._patterns:
             if pattern.search(text):
-                if message.type == 'superchat':
+                if isinstance(message, SuperChatMessage):
                     # 替换敏感词
-                    logger.info("Message blocked by forbidden sender name: {}, triggered by pattern: {}", message.sender, pattern.pattern)
-                    message.text = pattern.sub(lambda m: '*' * len(m.group(0)), message.text)
+                    logger.info(
+                        "Message blocked by forbidden sender name: {}, triggered by pattern: {}",
+                        message.sender,
+                        pattern.pattern,
+                    )
+                    message.text = pattern.sub(
+                        lambda m: "*" * len(m.group(0)), message.text
+                    )
                 else:
-                    logger.info("Message blocked by blacklist pattern: {}...", text[:20])
+                    logger.info(
+                        "Message blocked by blacklist pattern: {}...", text[:20]
+                    )
                     return True
 
         return False
-    
+
     def close(self) -> None:
         """关闭黑名单服务，释放资源"""
         if self.watchdog:
@@ -165,15 +209,18 @@ class BlacklistService:
 
         return result
 
+
 class DanmakuFilter:
     """弹幕过滤器
-    
+
     功能：
     - 黑名单（正则）
     - 短时间重复弹幕过滤
     """
 
-    def __init__(self, blacklist: BlacklistService | None = None, dedup_window: int = 5):
+    def __init__(
+        self, blacklist: BlacklistService | None = None, dedup_window: int = 5
+    ):
         self.dedup_window = dedup_window  # 去重时间窗口（秒）
 
         # 记录最近弹幕：
@@ -190,9 +237,9 @@ class DanmakuFilter:
         # ---------- 黑名单过滤 ----------
         if self.blacklist and self.blacklist.should_filter(message):
             return True
-        
+
         # ---------- 文字去重过滤 ----------
-        if message.type == 'plain':
+        if isinstance(message, PlainDanmakuMessage):
             text = message.text
 
             # dedup_window <= 0 表示不启用去重
@@ -213,7 +260,7 @@ class DanmakuFilter:
                 recent.append((text, current_time))
 
         return False
-    
+
     def close(self) -> None:
         """关闭过滤器，释放资源"""
         if self.blacklist:
@@ -226,15 +273,20 @@ class DanmakuFilter:
 # WebSocket 连接管理器
 # =========================
 
+
 class ConnectionManager:
     """WebSocket 连接管理器
-    
+
     管理两类连接：
     - 客户端（观众）
     - 上游（弹幕来源）
     """
 
-    def __init__(self, danmaku_filter: DanmakuFilter | None = None):
+    def __init__(
+        self,
+        danmaku_filter: DanmakuFilter | None = None,
+        room_settings_service: RoomSettingsService | None = None,
+    ):
         # 客户端连接：
         # group -> set[WebSocket]
         self.client_connections: dict[str, set[WebSocket]] = defaultdict(set)
@@ -243,6 +295,7 @@ class ConnectionManager:
         self.upstream_connections: set[WebSocket] = set()
 
         self.danmaku_filter = danmaku_filter
+        self.room_settings_service = room_settings_service
 
     # ---------- 连接管理 ----------
 
@@ -250,6 +303,7 @@ class ConnectionManager:
         """客户端连接到某个弹幕分组"""
         await websocket.accept()
         self.client_connections[group].add(websocket)
+        await self.send_room_settings(websocket, group)
         logger.info(f"客户端连接到群组 {group}")
 
     async def connect_upstream(self, websocket: WebSocket):
@@ -289,7 +343,7 @@ class ConnectionManager:
             except Exception:
                 pass
         self.upstream_connections.clear()
-        
+
         # 关闭过滤器
         if self.danmaku_filter:
             self.danmaku_filter.close()
@@ -307,7 +361,7 @@ class ConnectionManager:
             return
 
         # 特殊弹幕追加标识
-        if message.is_special:
+        if message.is_special and isinstance(message, PlainDanmakuMessage):
             message.text += "👑"
 
         message_json = message.model_dump_json()
@@ -324,19 +378,23 @@ class ConnectionManager:
         for ws in disconnected:
             self.disconnect_client(ws, group)
 
-    async def broadcast_control(self, group: str, control: DanmakuControl):
-        """向指定群组广播控制指令"""
+    def _build_settings_payload(self, group: str) -> str:
+        settings = (
+            self.room_settings_service.get(group)
+            if self.room_settings_service
+            else RoomSettings()
+        )
+        return json.dumps({"type": "settings", "settings": settings.model_dump()})
 
+    async def send_room_settings(self, websocket: WebSocket, group: str):
+        await websocket.send_text(self._build_settings_payload(group))
+
+    async def broadcast_room_settings(self, group: str):
         if group not in self.client_connections:
             return
 
-        payload = json.dumps({
-            "type": "control",
-            "control": control.model_dump()
-        })
-
+        payload = self._build_settings_payload(group)
         disconnected = []
-
         for websocket in self.client_connections[group]:
             try:
                 await websocket.send_text(payload)
@@ -345,7 +403,8 @@ class ConnectionManager:
 
         for ws in disconnected:
             self.disconnect_client(ws, group)
-            
+
+
 class DedupQueue:
     def __init__(self, dedup_window: float, blacklist_window: float = 20):
         self.filter_dedup_window = dedup_window
@@ -353,28 +412,44 @@ class DedupQueue:
         self.filter_seen: set[tuple[str | None, str]] = set()
 
         self.blacklist_dedup_window = blacklist_window
-        self.blacklist_queue: deque[tuple[tuple[str | None, str], float, bool]] = deque()
+        self.blacklist_queue: deque[tuple[tuple[str | None, str], float, bool]] = (
+            deque()
+        )
         self.blacklist_seen: dict[tuple[str | None, str], bool] = dict()
 
-    def _message_key(self, message: 'DanmakuMessage') -> tuple:
+    def _message_key(self, message: "DanmakuMessage") -> tuple:
         """根据弹幕类型动态生成去重/黑名单 key"""
-        if message.type in ('superchat', 'gift') and message.sender:
+        if isinstance(message, SuperChatMessage) and message.sender:
             return (message.sender, message.text)
-        return (None, message.text)
+        if isinstance(message, GiftMessage) and message.sender:
+            return (message.sender, message.gift_name)
+        if isinstance(message, PlainDanmakuMessage):
+            return (None, message.text)
+        if isinstance(message, EmoteMessage):
+            return (message.sender, message.emote_url)
+        return (None, "")
 
     def _clean_queue(self):
         now = time.time()
-        while self.filter_queue and now - self.filter_queue[0][1] > self.filter_dedup_window:
+        while (
+            self.filter_queue
+            and now - self.filter_queue[0][1] > self.filter_dedup_window
+        ):
             key, ts, should_filter = self.filter_queue.popleft()
             self.filter_seen.remove(key)
             self.blacklist_queue.append((key, ts, should_filter))
             self.blacklist_seen[key] = should_filter
 
-        while self.blacklist_queue and now - self.blacklist_queue[0][1] > self.blacklist_dedup_window:
+        while (
+            self.blacklist_queue
+            and now - self.blacklist_queue[0][1] > self.blacklist_dedup_window
+        ):
             key, _, _ = self.blacklist_queue.popleft()
             self.blacklist_seen.pop(key, None)
 
-    def add(self, message: DanmakuMessage, blacklist: Optional['BlacklistService'] = None) -> bool:
+    def add(
+        self, message: DanmakuMessage, blacklist: Optional["BlacklistService"] = None
+    ) -> bool:
         self._clean_queue()
         key = self._message_key(message)
 
