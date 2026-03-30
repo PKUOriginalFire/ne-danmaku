@@ -22,6 +22,7 @@ const reconnectAttempts = ref(0)
 const overlayOpacity = ref(1)
 const scRef = ref(null)
 const giftRef = ref(null)
+const danmakuResizeCleanup = ref(null)
 const roomSettings = ref({
   overlay_opacity: 100,
   enable_emoji: true,
@@ -187,6 +188,16 @@ function sendMessage(msg) {
   }
 }
 
+function clearAllOverlays() {
+  scRef.value?.clearAll?.()
+  giftRef.value?.clearAll?.()
+  danmakuResizeCleanup.value?.()
+  danmakuResizeCleanup.value = null
+  danmaku.value?.destroy()
+  danmaku.value = null
+  initDanmaku()
+}
+
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
   const wsUrl = `${protocol}${window.location.host}/api/danmaku/v1/danmaku/${props.roomId}`
@@ -201,6 +212,10 @@ function connectWebSocket() {
     const data = JSON.parse(event.data)
     if (data?.type === 'settings' && data?.settings) {
       applyRoomSettings(data.settings)
+      return
+    }
+    if (data?.type === 'control' && data?.action === 'clear_all') {
+      clearAllOverlays()
       return
     }
     sendMessage(data)
@@ -220,6 +235,12 @@ function connectWebSocket() {
 function initDanmaku() {
   if (!containerRef.value)
     return
+
+  danmakuResizeCleanup.value?.()
+  danmakuResizeCleanup.value = null
+  danmaku.value?.destroy()
+  danmaku.value = null
+
   const config = getConfig()
   danmaku.value = new Danmaku({
     container: containerRef.value,
@@ -230,19 +251,22 @@ function initDanmaku() {
 
   const handleResize = () => danmaku.value?.resize()
   window.addEventListener('resize', handleResize)
-  return () => {
+  danmakuResizeCleanup.value = () => {
     window.removeEventListener('resize', handleResize)
   }
 }
 
 onMounted(() => {
-  const cleanup = initDanmaku()
+  initDanmaku()
   connectWebSocket()
-  onUnmounted(() => {
-    cleanup?.()
-    socket.value?.close()
-    danmaku.value?.destroy()
-  })
+})
+
+onUnmounted(() => {
+  danmakuResizeCleanup.value?.()
+  danmakuResizeCleanup.value = null
+  socket.value?.close()
+  danmaku.value?.destroy()
+  danmaku.value = null
 })
 
 watch(() => props.roomId, () => {

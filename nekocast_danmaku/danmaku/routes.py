@@ -62,6 +62,13 @@ def create_router(config: DanmakuConfig) -> APIRouter:
         await connection_manager.broadcast_room_settings(group)
         return updated.model_dump()
 
+    @router.post("/admin/rooms/{group}/clear")
+    async def clear_room_overlays(request: Request, group: str, token: str = Query(None)):
+        validate_admin_token(token)
+        connection_manager: ConnectionManager = request.app.state.danmaku_manager
+        await connection_manager.broadcast_control_message(group, "clear_all")
+        return {"ok": True, "group": group, "action": "clear_all"}
+
     @router.websocket("/upstream")
     async def upstream_websocket(websocket: WebSocket, token: str = Query(None)):
         """上游弹幕 WebSocket

@@ -207,10 +207,22 @@ function getColor(level) {
     }
 }
 
+function clearAll() {
+    const allItems = [...giftDisplayList.value, ...giftStoreList.value]
+    for (const item of allItems) {
+        if (item.autoRemoveTimer) {
+            clearTimeout(item.autoRemoveTimer)
+        }
+    }
+    giftDisplayList.value = []
+    giftStoreList.value = []
+}
+
 /* =============================== */
 
 defineExpose({
-    addGift
+    addGift,
+    clearAll,
 })
 </script>
 

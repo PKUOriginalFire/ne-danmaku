@@ -116,9 +116,21 @@ function getColor(amount) {
     return "linear-gradient(90deg, #56ab2f, #a8e063)"
 }
 
+function clearAll() {
+    const allItems = [...scDisplayList.value, ...scStoreList.value]
+    for (const item of allItems) {
+        if (item.autoRemoveTimer) {
+            clearTimeout(item.autoRemoveTimer)
+        }
+    }
+    scDisplayList.value = []
+    scStoreList.value = []
+}
+
 /* ✅ 关键：暴露给父组件 */
 defineExpose({
-    addSC
+    addSC,
+    clearAll,
 })
 </script>
   

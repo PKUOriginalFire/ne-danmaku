@@ -404,6 +404,22 @@ class ConnectionManager:
         for ws in disconnected:
             self.disconnect_client(ws, group)
 
+    async def broadcast_control_message(self, group: str, action: str):
+        """向指定群组广播控制指令（例如清空前端覆盖层）"""
+        if group not in self.client_connections:
+            return
+
+        payload = json.dumps({"type": "control", "action": action})
+        disconnected = []
+        for websocket in self.client_connections[group]:
+            try:
+                await websocket.send_text(payload)
+            except Exception:
+                disconnected.append(websocket)
+
+        for ws in disconnected:
+            self.disconnect_client(ws, group)
+
 
 class DedupQueue:
     def __init__(self, dedup_window: float, blacklist_window: float = 20):

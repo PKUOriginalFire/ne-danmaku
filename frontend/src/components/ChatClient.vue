@@ -26,6 +26,7 @@ const reconnectAttempts = ref(0)
 const authToken = ref('')
 const settingsSaving = ref(false)
 const settingsError = ref('')
+const clearingOverlay = ref(false)
 
 const roomSettings = ref({
   overlay_opacity: 100,
@@ -49,6 +50,7 @@ const canSend = computed(() => {
 
 const hasAuthKey = computed(() => Boolean(authToken.value))
 const canSaveSettings = computed(() => upstreamSocketOk.value && hasAuthKey.value && !settingsSaving.value)
+const canClearOverlay = computed(() => hasAuthKey.value && !clearingOverlay.value)
 
 function formatMessageText(message) {
   if (typeof message?.text === 'string' && message.text.trim())
@@ -178,6 +180,32 @@ async function saveSettings() {
   }
   finally {
     settingsSaving.value = false
+  }
+}
+
+async function clearOverlayNow() {
+  if (!canClearOverlay.value)
+    return
+
+  if (!window.confirm('确认移除当前房间现有的礼物、SC 和弹幕显示吗？'))
+    return
+
+  clearingOverlay.value = true
+  settingsError.value = ''
+  try {
+    const resp = await fetch(`/api/danmaku/v1/admin/rooms/${encodeURIComponent(props.roomId)}/clear?token=${encodeURIComponent(authToken.value)}`, {
+      method: 'POST',
+    })
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`)
+    showMessage({ text: '已发送清空指令', source: 'system' })
+  }
+  catch (e) {
+    settingsError.value = `清空失败: ${e.message}`
+    showMessage({ text: settingsError.value, source: 'system' })
+  }
+  finally {
+    clearingOverlay.value = false
   }
 }
 
@@ -364,6 +392,9 @@ onUnmounted(() => {
       <label class="toggle-item"><input v-model="roomSettings.bind_position" type="checkbox">允许置顶/置底定位</label>
       <button class="primary-btn" :disabled="!canSaveSettings" @click="saveSettings">
         {{ settingsSaving ? '保存中...' : '保存设置' }}
+      </button>
+      <button class="danger-btn" :disabled="!canClearOverlay" @click="clearOverlayNow">
+        {{ clearingOverlay ? '清空中...' : '移除现有礼物/SC/弹幕' }}
       </button>
       <div v-if="settingsError" class="error-text">{{ settingsError }}</div>
     </section>
@@ -643,6 +674,27 @@ onUnmounted(() => {
 .primary-btn:not(:disabled):hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 30px rgba(79, 70, 229, 0.35);
+}
+
+.danger-btn {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(120deg, #dc2626, #f97316);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.danger-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.danger-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(239, 68, 68, 0.35);
 }
 
 .error-text {
