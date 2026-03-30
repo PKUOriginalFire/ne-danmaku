@@ -13,39 +13,47 @@ from http.cookies import SimpleCookie
 from loguru import logger
 
 from ..config import BilibiliConfig
-from .models import ConnectionManager, DanmakuMessage
+from .models import ConnectionManager, PlainDanmakuMessage, SuperChatMessage, DanmakuMessage
 
 
 @dataclass
 class BLiveDanmakuPacket:
     """Bilibili 弹幕数据包"""
+
     room_id: int
     message: DanmakuMessage
 
 
 class DanmakuHandler(BaseHandler):
     """Bilibili 弹幕处理器"""
-    
+
     def __init__(self, aio_queue: Queue):
         super().__init__()
         self.queue = aio_queue
 
     def _on_danmaku(self, client: BLiveClient, message: BLiveDanmakuMessage):
         """处理普通弹幕"""
+        if not client.room_id:
+            return
         self.queue.put_nowait(
             BLiveDanmakuPacket(
                 room_id=client.room_id,
-                message=DanmakuMessage(text=message.msg, sender=message.uname),
+                message=PlainDanmakuMessage(text=message.msg, sender=message.uname),
             )
         )
 
     def _on_super_chat(self, client: BLiveClient, message: BLiveSuperChatMessage):
         """处理 SC (SuperChat)"""
+        if not client.room_id:
+            return
         self.queue.put_nowait(
             BLiveDanmakuPacket(
                 room_id=client.room_id,
-                message=DanmakuMessage(
-                    text=message.message, sender=message.uname, is_special=True
+                message=SuperChatMessage(
+                    text=message.message,
+                    sender=message.uname,
+                    duration=message.time,
+                    cost=message.price,
                 ),
             )
         )
@@ -62,7 +70,7 @@ async def post_queue(
     danmaku_channel: str,
 ):
     """从队列中取出弹幕并广播
-    
+
     Args:
         queue: 弹幕队列
         connection_manager: 连接管理器
@@ -77,13 +85,13 @@ async def start_bilibili_client(
     config: BilibiliConfig, connection_manager: ConnectionManager
 ):
     """启动 Bilibili 直播弹幕客户端
-    
+
     Args:
         config: Bilibili 配置
         connection_manager: 连接管理器
     """
     global blive_session
-    
+
     # 创建会话
     if config.sess_data:
         cookies = SimpleCookie()
@@ -101,7 +109,7 @@ async def start_bilibili_client(
         client.set_handler(handler)
         client.start()
         blive_clients.append(client)
-        
+
         blive_tasks.append(
             create_task(
                 post_queue(queue, connection_manager, danmaku_channel),
@@ -119,20 +127,20 @@ async def start_bilibili_client(
 async def stop_bilibili_client():
     """停止 Bilibili 直播弹幕客户端"""
     global blive_session
-    
+
     # 停止所有客户端
     for client in blive_clients:
         await client.stop_and_close()
     blive_clients.clear()
-    
+
     # 取消所有任务
     for task in blive_tasks:
         task.cancel()
     blive_tasks.clear()
-    
+
     # 关闭会话
     if blive_session:
         await blive_session.close()
         blive_session = None
-    
+
     logger.info("Bilibili 弹幕客户端已停止")

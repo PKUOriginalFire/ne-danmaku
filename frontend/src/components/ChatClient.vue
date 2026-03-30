@@ -50,6 +50,50 @@ const canSend = computed(() => {
 const hasAuthKey = computed(() => Boolean(authToken.value))
 const canSaveSettings = computed(() => upstreamSocketOk.value && hasAuthKey.value && !settingsSaving.value)
 
+function formatMessageText(message) {
+  if (typeof message?.text === 'string' && message.text.trim())
+    return message.text
+
+  if (message?.type === 'emote')
+    return '[Emoji 消息]'
+
+  if (message?.type === 'superchat')
+    return `[SC] ${message?.cost ?? 0} 元, ${message?.duration ?? 0} 秒`
+
+  if (message?.type === 'gift')
+    return `[礼物] ${message?.gift_name ?? '未知礼物'} x${message?.quantity ?? 1}, cost=${message?.cost ?? 0}`
+
+  if (message?.type === 'settings')
+    return '[房间设置同步消息]'
+
+  return '[非文本消息]'
+}
+
+function shouldShowDebugInfo(message) {
+  if (!message)
+    return false
+  return ['emote', 'superchat', 'gift'].includes(message.type) || Boolean(message.is_special)
+}
+
+function stringifyDebugInfo(message) {
+  try {
+    return JSON.stringify(message, null, 2)
+  }
+  catch {
+    return String(message)
+  }
+}
+
+function resolveMediaUrl(value) {
+  if (!value)
+    return null
+  if (typeof value !== 'string')
+    return null
+  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('/'))
+    return value
+  return `/api/emoji/${value}`
+}
+
 function showMessage(msg) {
   messages.value.push(msg)
   if (messages.value.length > MESSAGE_LIMIT)
@@ -290,7 +334,20 @@ onUnmounted(() => {
             {{ message.source === 'client' ? '客户端' : message.source === 'upstream' ? '上游' : '系统' }}
           </span>
         </header>
-        <p class="message-text">{{ message.text }}</p>
+        <p class="message-text">{{ formatMessageText(message) }}</p>
+
+        <div v-if="message.type === 'emote'" class="message-media">
+          <img :src="resolveMediaUrl(message.emote_url) || 'https://placeholder.im/120x120/111827/e5e7eb'" alt="emoji">
+        </div>
+
+        <div v-if="message.type === 'gift'" class="message-media">
+          <img :src="resolveMediaUrl(message.image_url) || 'https://placeholder.im/120x120/374151/e5e7eb'" alt="gift">
+        </div>
+
+        <details v-if="shouldShowDebugInfo(message)" class="debug-panel">
+          <summary>Debug Info</summary>
+          <pre>{{ stringifyDebugInfo(message) }}</pre>
+        </details>
       </article>
     </section>
 
@@ -416,6 +473,46 @@ onUnmounted(() => {
 
 .message-sender {
   color: #93c5fd;
+}
+
+.message-text {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.message-media {
+  margin-top: 8px;
+}
+
+.message-media img {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.debug-panel {
+  margin-top: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.debug-panel summary {
+  cursor: pointer;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+}
+
+.debug-panel pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #93c5fd;
+  font-size: 0.8rem;
 }
 
 .message-tag {

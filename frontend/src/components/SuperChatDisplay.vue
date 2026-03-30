@@ -2,7 +2,7 @@
     <div class="sc-container">
         <TransitionGroup name="sc" tag="div" @after-enter="handleAfterEnter">
             <div v-for="sc in scDisplayList" :key="sc.id" :data-id="sc.id" class="sc-block"
-                :style="{ background: getColor(sc.amount) }">
+                :style="{ background: getColor(sc.cost) }">
 
                 <div class="sc-avatar">
                     <img :src="sc.avatar || 'https://placeholder.im/100x100/cccccc'" alt="avatar" />
@@ -12,7 +12,7 @@
 
                     <div class="sc-header">
                         <strong>{{ sc.user }}</strong>
-                        <span class="amount">{{ sc.amount }} 燕元</span>
+                        <span class="amount">{{ sc.cost }} 燕元</span>
                     </div>
 
                     <div class="sc-text">

@@ -111,7 +111,7 @@ function emitSC(msg) {
     user: msg.sender,
     amount: msg.cost,
     text: msg.text,
-    ttl: msg.duration,
+    ttl: msg.duration * 1000,
     avatar: `/api/emoji/${msg.avatar_url}`,
   })
 }
@@ -135,6 +135,7 @@ function emitGift(msg) {
     gift_name: msg.gift_name,
     quantity: msg.quantity,
     cost: msg.cost,
+    image_url: msg.image_url,
     avatar: `/api/emoji/${msg.avatar_url}`,
   })
 }

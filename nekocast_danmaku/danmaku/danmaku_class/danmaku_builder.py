@@ -3,6 +3,8 @@ from typing import Literal
 
 from satori.element import Element, Text, Image
 
+from ...config import GiftConfig, SuperChatConfig
+
 from .danmaku_message import (
     PlainDanmakuMessage,
     EmoteMessage,
@@ -11,14 +13,76 @@ from .danmaku_message import (
     DanmakuMessage,
 )
 
-SC_PATTERN = re.compile(r"^/sc(?:\s+(?P<duration>\d+))?\s+(?P<text>.+)$", re.IGNORECASE)
+SC_PATTERN = re.compile(r"^/sc(?:\s+(?P<cost>\d+(?:\.\d+)?))?\s+(?P<text>.+)$", re.IGNORECASE)
+SC_PREFIX_PATTERN = re.compile(r"^/sc(?:\s|$)", re.IGNORECASE)
 
 GIFT_PATTERN = re.compile(
     r"^/gift\s+(?P<gift_name>.+?)(?:\s+(?P<quantity>\d+))?\s*$", re.IGNORECASE
 )
+GIFT_PREFIX_PATTERN = re.compile(r"^/gift(?:\s|$)", re.IGNORECASE)
 
 POSITION_RE = re.compile(r"/(?:置顶|置底)\s+", re.IGNORECASE)
 COLOR_RE = re.compile(r"\#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\s+", re.IGNORECASE)
+
+
+_superchat_config = SuperChatConfig()
+_gift_config = GiftConfig()
+_gift_cost_lookup: dict[str, float] = {}
+_gift_image_lookup: dict[str, str] = {}
+
+
+def configure_parsing_rules(
+    *,
+    superchat: SuperChatConfig | None = None,
+    gift: GiftConfig | None = None,
+) -> None:
+    """Update parser behavior with dynamic config from `config.json`."""
+
+    global _superchat_config, _gift_config, _gift_cost_lookup, _gift_image_lookup
+
+    _superchat_config = superchat or SuperChatConfig()
+    _gift_config = gift or GiftConfig()
+
+    lookup: dict[str, float] = {}
+    image_lookup: dict[str, str] = {}
+    for gift_name, item in _gift_config.items.items():
+        unit_cost = max(0.0, float(item.cost))
+        normalized_name = gift_name.strip().lower()
+        if normalized_name:
+            lookup[normalized_name] = unit_cost
+            if item.image_url:
+                image_lookup[normalized_name] = item.image_url
+
+        for alias in item.aliases:
+            normalized_alias = alias.strip().lower()
+            if normalized_alias:
+                lookup[normalized_alias] = unit_cost
+                if item.image_url:
+                    image_lookup[normalized_alias] = item.image_url
+
+    _gift_cost_lookup = lookup
+    _gift_image_lookup = image_lookup
+
+
+def _duration_from_cost(cost: float) -> int:
+    cfg = _superchat_config
+    raw = int(round(max(0.0, float(cost)) * float(cfg.duration_per_cost)))
+    bounded = max(int(cfg.min_duration), raw)
+    return min(int(cfg.max_duration), bounded)
+
+
+def _gift_cost(gift_name: str, quantity: int) -> float:
+    unit_cost = _gift_cost_lookup.get(gift_name.strip().lower(), _gift_config.default_cost)
+    return max(0.0, float(unit_cost)) * float(max(1, quantity))
+
+
+def _gift_image(gift_name: str) -> str | None:
+    return _gift_image_lookup.get(gift_name.strip().lower())
+
+
+def is_special_command_prefix(raw: str) -> bool:
+    s = raw.strip()
+    return SC_PREFIX_PATTERN.match(s) is not None or GIFT_PREFIX_PATTERN.match(s) is not None
 
 
 class DanmakuBuilder:
@@ -36,9 +100,9 @@ class DanmakuBuilder:
             if not all(isinstance(i, Text) for i in elements):
                 return None
 
-            if SC_PATTERN.match(text):
+            if SC_PREFIX_PATTERN.match(text):
                 return "superchat"
-            elif GIFT_PATTERN.match(text):
+            elif GIFT_PREFIX_PATTERN.match(text):
                 return "gift"
             else:
                 return "plain"
@@ -78,14 +142,9 @@ class DanmakuBuilder:
             text = "".join(i.text for i in elements if isinstance(i, Text)).strip()
             sc_info = parse_sc(text)
             if sc_info is None:
-                # 总可以构建成普通弹幕
-                return PlainDanmakuMessage(
-                    text=text,
-                    senderId=senderId,
-                    sender=sender,
-                )
+                # `/sc` 前缀命中但参数不完整时拦截，不降级为普通弹幕。
+                return None
             return SuperChatMessage(
-                cost=0,  # 金额信息无法从文本中获取，默认为0
                 senderId=senderId,
                 sender=sender,
                 avatar_url=avatar_url,
@@ -97,16 +156,11 @@ class DanmakuBuilder:
             text = elements[0].text.strip()
             gift_info = parse_gift(text)
             if gift_info is None:
-                # 总可以构建成普通弹幕
-                return PlainDanmakuMessage(
-                    text=text,
-                    senderId=senderId,
-                    sender=sender,
-                )
+                # `/gift` 前缀命中但参数不完整时拦截，不降级为普通弹幕。
+                return None
             return GiftMessage(
                 senderId=senderId,
                 sender=sender,
-                cost=0,  # 礼物总价值无法从文本中获取，默认为0
                 avatar_url=avatar_url,
                 **gift_info,
             )
@@ -176,9 +230,12 @@ def parse_gift(raw: str):
         return None
     gift_name = m.group("gift_name")
     quantity = m.group("quantity")
+    parsed_quantity = int(quantity) if quantity is not None else 1
     return {
         "gift_name": gift_name,
-        "quantity": int(quantity) if quantity is not None else 1,  # 默认 1
+        "quantity": parsed_quantity,  # 默认 1
+        "cost": _gift_cost(gift_name, parsed_quantity),
+        "image_url": _gift_image(gift_name),
     }
 
 
@@ -187,11 +244,11 @@ def parse_sc(raw: str):
     if not m:
         return None
 
-    duration = m.group("duration")
-    if duration is None:
-        duration = 10
+    cost = m.group("cost")
+    parsed_cost = float(cost) if cost is not None else float(_superchat_config.default_cost)
 
     return {
-        "duration": int(duration),
+        "cost": parsed_cost,
+        "duration": _duration_from_cost(parsed_cost),
         "text": m.group("text"),  # 保留原始空格
     }

@@ -23,8 +23,7 @@
                     <div class="gift-text">{{ gift.name }}</div>
                 </div>
                 <div class="gift-image">
-                    <!-- <img :src="gift.imageURL" alt="gift" /> -->
-                    <img :src="'https://placeholder.im/100x100/ff0000'" alt="gift" />
+                    <img :src="gift.imageURL || 'https://placeholder.im/100x100/ff0000'" alt="gift" />
                 </div>
                 <div class="gift-amount">x{{ gift.amount }}</div>
             </div>
@@ -34,7 +33,6 @@
 
 <script setup>
 import { ref } from 'vue'
-import { GiftConfig, isGiftType, formGiftType } from './GiftEnum'
 
 /* ===============================
    核心状态
@@ -122,13 +120,9 @@ function refreshGift(existing, newGift) {
 ================================ */
 
 function addGift(data) {
-    if (!isGiftType(data.gift_name)) {
-        console.warn('未知礼物类型:', data.gift_name)
-        return
-    }
-
-    const giftType = formGiftType(data.gift_name)
-    const config = GiftConfig[giftType]
+    const quantity = Number(data.quantity) > 0 ? Number(data.quantity) : 1
+    const totalCost = Number(data.cost) >= 0 ? Number(data.cost) : 0
+    const unitCost = totalCost / quantity
 
     const gift = {
         id: crypto.randomUUID(),
@@ -136,12 +130,12 @@ function addGift(data) {
         autoRemoveTimer: null,
         scale: 1,
         ...data,
-        name: config.name,
-        amount: data.quantity,
-        cost: data.cost | data.quantity * config.cost,
-        giftType: giftType,
-        level: config.level,
-        imageURL: config.imageURL,
+        name: data.gift_name,
+        amount: quantity,
+        cost: totalCost,
+        giftType: data.gift_name,
+        level: resolveLevel(unitCost),
+        imageURL: data.image_url || null,
     }
 
     const existing = giftDisplayList.value.find(
@@ -170,6 +164,18 @@ function addGift(data) {
     } else {
         insertByLevel(giftStoreList.value, gift)
     }
+}
+
+function resolveLevel(unitCost) {
+    if (unitCost >= 50)
+        return 5
+    if (unitCost >= 20)
+        return 4
+    if (unitCost >= 10)
+        return 3
+    if (unitCost >= 5)
+        return 2
+    return 1
 }
 
 /* ===============================

@@ -38,14 +38,61 @@ class BilibiliConfig(BaseModel):
     sess_data: str
 
 
+class OneBotV11Config(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 5701
+    access_token: Optional[str] = None
+    secret: Optional[str] = None
+    group_map: dict[str, str]
+
+
 class UpstreamConfig(BaseModel):
     token: str
+
+
+class SuperChatConfig(BaseModel):
+    """Text command SC pricing and duration policy."""
+
+    default_cost: float = 10.0
+    duration_per_cost: float = 1.0
+    min_duration: int = 10
+    max_duration: int = 300
+
+
+class GiftItemConfig(BaseModel):
+    """Single gift entry used by `/gift` parsing."""
+
+    cost: float
+    aliases: list[str] = Field(default_factory=list)
+    image_url: Optional[str] = None
+
+
+class GiftConfig(BaseModel):
+    """Gift pricing table for text command parsing."""
+
+    default_cost: float = 1.0
+    items: dict[str, GiftItemConfig] = Field(default_factory=dict)
+
+
+class CashConfig(BaseModel):
+    """Cash accrual and spending policy for non-Bilibili sources."""
+
+    enabled: bool = True
+    initial_amount: float = 10.0
+    reward_per_message: float = 0.0
+    reward_interval_seconds: int = 0
+    reward_per_interval: float = 0.0
 
 
 class DanmakuConfig(BaseModel):
     satori: Optional[SatoriConfig] = None
     bilibili: Optional[BilibiliConfig] = None
+    onebot_v11: Optional[OneBotV11Config] = None
     upstream: Optional[UpstreamConfig] = None
+
+    superchat: SuperChatConfig = Field(default_factory=SuperChatConfig)
+    gift: GiftConfig = Field(default_factory=GiftConfig)
+    cash: CashConfig = Field(default_factory=CashConfig)
     
     dedup_window: int = 5  # 去重时间窗口，单位秒
 

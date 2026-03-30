@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 # FastAPI：主应用对象
 # HTTPException：用于显式抛出 HTTP 错误
 # Request：用于获取请求上下文（URL、路径等）
@@ -114,23 +114,25 @@ def setup_static_files(app: FastAPI) -> None:
             return FileResponse(frontend_dist / "index.html")
 
 
+def create_api_router(config: AppConfig) -> APIRouter:
+    """Create a combined router for all danmaku-related HTTP/WebSocket APIs."""
+    router = APIRouter()
+
+    from .danmaku.routes import create_router as create_danmaku_router
+    from .emoji.routes import router as emoji_router
+
+    danmaku_router = create_danmaku_router(config.danmaku)
+    router.include_router(danmaku_router, prefix="/api/danmaku/v1", tags=["danmaku"])
+    router.include_router(emoji_router, prefix="/api/emoji", tags=["emoji"])
+
+    return router
+
+
 def register_routers(app: FastAPI, config: AppConfig) -> None:
     # 注册所有弹幕相关的 API 路由
 
-    from .danmaku.routes import create_router as create_danmaku_router
-    # 延迟导入，避免模块加载顺序 / 循环依赖问题
-
-    # 创建弹幕路由（传入弹幕配置）
-    danmaku_router = create_danmaku_router(config.danmaku)
-
-    # 挂载路由到 /api/danmaku/v1
-    app.include_router(
-        danmaku_router,
-        prefix="/api/danmaku/v1",
-        tags=["danmaku"],
-    )
-
-    logger.info("Registered danmaku routes at /api/danmaku/v1")
+    app.include_router(create_api_router(config))
+    logger.info("Registered danmaku and emoji routes")
 
 
 def register_event_handlers(app: FastAPI, config: AppConfig) -> None:
@@ -171,6 +173,8 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         BlacklistService,
         RoomSettingsService,
     )
+    from .danmaku.cash_system import CashPolicy, RoomCashSystem
+    from .danmaku.danmaku_class.danmaku_builder import configure_parsing_rules
     from .danmaku.watcher import start_blacklist_watcher
     
     # 延迟导入，避免启动阶段的循环依赖
@@ -187,6 +191,11 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         config.danmaku.forbidden_users_file,
     )
 
+    configure_parsing_rules(
+        superchat=config.danmaku.superchat,
+        gift=config.danmaku.gift,
+    )
+
     # 创建弹幕过滤器（加载黑名单规则）
     danmaku_filter = DanmakuFilter(
         blacklist=blacklist,
@@ -200,8 +209,18 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         room_settings_service=room_settings_service,
     )
 
+    cash_policy = CashPolicy(
+        enabled=config.danmaku.cash.enabled,
+        initial_amount=max(0.0, float(config.danmaku.cash.initial_amount)),
+        reward_per_message=max(0.0, float(config.danmaku.cash.reward_per_message)),
+        reward_interval_seconds=max(0, int(config.danmaku.cash.reward_interval_seconds)),
+        reward_per_interval=max(0.0, float(config.danmaku.cash.reward_per_interval)),
+    )
+    room_cash_system = RoomCashSystem(cash_policy)
+
     # 挂载到 app.state，供路由和其他模块使用
     app.state.danmaku_manager = connection_manager
+    app.state.room_cash_system = room_cash_system
 
     # 如果配置了 Satori 上游，则启动对应客户端
     if config.danmaku.satori:
@@ -211,6 +230,7 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
             config.danmaku.satori,
             connection_manager,
             app.state.emoji_cache,
+            room_cash_system,
         )
         logger.info("Satori client started")
 
@@ -224,9 +244,28 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         )
         logger.info("Bilibili client started")
 
+    if config.danmaku.onebot_v11:
+        from .danmaku.onebot_v11_client import start_onebot_v11_client
+
+        await start_onebot_v11_client(
+            config.danmaku.onebot_v11,
+            connection_manager,
+            app.state.emoji_cache,
+            room_cash_system,
+        )
+        logger.info("OneBot v11 client started")
+
 
 async def shutdown_danmaku(app: FastAPI) -> None:
     # 服务关闭时，断开所有弹幕连接
+
+    from .danmaku.bilibili_client import stop_bilibili_client
+    from .danmaku.onebot_v11_client import stop_onebot_v11_client
+    from .danmaku.satori_client import stop_satori_client
+
+    await stop_satori_client()
+    await stop_bilibili_client()
+    await stop_onebot_v11_client()
 
     if hasattr(app.state, "danmaku_manager"):
         await app.state.danmaku_manager.disconnect_all()

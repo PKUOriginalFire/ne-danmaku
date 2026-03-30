@@ -53,7 +53,7 @@ class SuperChatMessage(DanmakuBase):
     
     """超级聊天消息结构（继承自 DanmakuMessage）"""
     duration: int               # 显示时长（秒）
-    cost: int                 # 付费金额（分）
+    cost: float                 # 付费金额
 
 # ==========================
 # 礼物消息结构（不考虑Bilibili）
@@ -63,11 +63,12 @@ class GiftMessage(DanmakuBase):
     """礼物消息结构（继承自 DanmakuMessage）"""
     type: Literal["gift"] = "gift"  # 弹幕类型
     avatar_url: str | None = None    # 头像 URL（可选）
+    image_url: str | None = None     # 礼物图片 URL（可选）
     
     # gift_name: Literal[...]（未来方向）
     gift_name: str             # 礼物名称
     quantity: int              # 礼物数量
-    cost: int   # 礼物总价值（分）
+    cost: float   # 礼物总价值
 
 
 DanmakuMessage = Annotated[

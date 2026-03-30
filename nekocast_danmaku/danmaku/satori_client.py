@@ -23,8 +23,9 @@ from ..config import SatoriConfig
 # Satori 的配置结构
 
 from .models import ConnectionManager
+from .cash_system import RoomCashSystem
 from .danmaku_class.danmaku_builder import DanmakuBuilder
-from .danmaku_class.danmaku_message import EmoteMessage, GiftMessage, SuperChatMessage
+from .danmaku_class.danmaku_message import EmoteMessage, GiftMessage, PlainDanmakuMessage, SuperChatMessage
 # ConnectionManager：本地弹幕连接管理器
 # DanmakuMessage：统一的弹幕消息数据结构
 
@@ -45,6 +46,7 @@ async def start_satori_client(
     config: SatoriConfig,
     connection_manager: ConnectionManager,
     emoji_cache: EmojiCache,
+    room_cash_system: RoomCashSystem,
 ) -> Task:
     """启动 Satori 客户端
     
@@ -106,6 +108,13 @@ async def start_satori_client(
             or event.user.name
             or "匿名"
         )
+        cash_user_id = str(userid) or f"name:{username}"
+
+        room_cash_system.reward_for_message(
+            room_id=danmaku_channel,
+            user_id=cash_user_id,
+            user_name=username,
+        )
 
         # 消息内容是“元素列表”
         elements = event.message.message
@@ -143,7 +152,17 @@ async def start_satori_client(
                 username,
                 danmaku,
             )
-        
+
+        if isinstance(danmaku, (SuperChatMessage, GiftMessage)):
+            allowed, balance = room_cash_system.spend_huo(
+                room_id=danmaku_channel,
+                user_id=cash_user_id,
+                user_name=username,
+                amount=danmaku.cost,
+            )
+            if not allowed:
+                return
+
         if isinstance(danmaku, EmoteMessage):
             # 如果是表情消息，尝试缓存表情图片
             emoji_url = await emoji_cache.load_emoji(danmaku.emote_url, userid)

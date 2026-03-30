@@ -20,6 +20,48 @@
       },
       "sess_data": "B站登录用 SESS_DATA"
     },
+    "onebot_v11": {
+      "host": "127.0.0.1",
+      "port": 5701,
+      "access_token": null,
+      "secret": null,
+      "group_map": {
+        "QQ群号": "房间名"
+      }
+    },
+    "superchat": {
+      "default_cost": 10,
+      "duration_per_cost": 1,
+      "min_duration": 10,
+      "max_duration": 300
+    },
+    "gift": {
+      "default_cost": 1,
+      "items": {
+        "good": {
+          "cost": 1,
+          "aliases": ["这个好诶"],
+          "image_url": "/assets/gifts/good.png"
+        },
+        "tower": {
+          "cost": 5,
+          "aliases": ["博雅塔"],
+          "image_url": "/assets/gifts/tower.png"
+        },
+        "eggplant": {
+          "cost": 50,
+          "aliases": ["谢谢茄子"],
+          "image_url": "/assets/gifts/eggplant.png"
+        }
+      }
+    },
+    "cash": {
+      "enabled": true,
+      "initial_amount": 10.0,
+      "reward_per_message": 0.0,
+      "reward_interval_seconds": 60,
+      "reward_per_interval": 1.0
+    },
     "blacklists": []
   }
 }
