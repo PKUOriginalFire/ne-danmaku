@@ -166,6 +166,39 @@ class DanmakuBuilder:
             )
         else:
             return None
+    
+    # 如果对文本正常解析，但是没有足够的钱或者其他资源来完成特殊弹幕的创建，那么可以调用这个方法来降级为普通弹幕，保留文本内容但丢弃特殊属性。
+    @staticmethod
+    def to_plain(
+        message: DanmakuMessage,
+    ) -> PlainDanmakuMessage:
+        if isinstance(message, PlainDanmakuMessage):
+            # 置顶/置底/颜色等命令也需要钱，所以也可以降级为普通弹幕
+            message.color = None
+            message.position = "scroll"
+            return message
+        elif isinstance(message, EmoteMessage):
+            text = ""  # 表情弹幕没有文本内容
+            return PlainDanmakuMessage(
+                senderId=message.senderId,
+                sender=message.sender,
+                text=text,
+            )
+        elif isinstance(message, SuperChatMessage):
+            return PlainDanmakuMessage(
+                senderId=message.senderId,
+                sender=message.sender,
+                text=message.text,
+            )
+        elif isinstance(message, GiftMessage):
+            text = f"{message.gift_name}"
+            return PlainDanmakuMessage(
+                senderId=message.senderId,
+                sender=message.sender,
+                text=text,
+            )
+        else:
+            raise ValueError("Unsupported message type for to_plain conversion")
 
 # ===========================
 # 工具函数

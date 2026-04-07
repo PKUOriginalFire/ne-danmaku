@@ -1,219 +1,242 @@
 from __future__ import annotations
-
 import time
 from dataclasses import dataclass
+from sqlalchemy import (
+    Column, String, Float, Boolean, create_engine, text
+)
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+from typing import Optional
 
 from loguru import logger
 
+Base = declarative_base()
 
-class User:
-    '''
-    用户类，包含用户的基本信息和余额等属性。
-    '''
-    def __init__(self, user_id: str, user_name: str, yuan: float = 0.0, huo: float = 0.0):
-        self.user_id = user_id
-        self.user_name = user_name
-        self.yuan = yuan
-        self.huo = huo
+# -------------------- ORM Model --------------------
+class UserORM(Base):
+    __tablename__ = "users"
+    room_id = Column(String, primary_key=True)
+    user_id = Column(String, primary_key=True)
+    user_name = Column(String, nullable=False)
+    yuan = Column(Float, default=0.0, nullable=False)
+    huo = Column(Float, default=0.0, nullable=False)
 
-    def add_yuan(self, amount: float) -> None:
-        self.yuan += float(amount)
-        logger.debug(f"用户 {self.user_name} 增加了 {amount} 元，当前余额: {self.yuan} 元")
-    
-    def add_huo(self, amount: float) -> None:
-        self.huo += float(amount)
-        logger.debug(f"用户 {self.user_name} 增加了 {amount} 火，当前余额: {self.huo} 火")
-    
-    def spend_yuan(self, amount: float) -> bool:
-        if self.yuan >= amount:
-            self.yuan -= float(amount)
-            logger.debug(f"用户 {self.user_name} 花费了 {amount} 元，当前余额: {self.yuan} 元")
-            return True
-        else:
-            logger.warning(f"用户 {self.user_name} 余额不足，无法花费 {amount} 元，当前余额: {self.yuan} 元")
-            return False
-    
-    def spend_huo(self, amount: float) -> bool:
-        if self.huo >= amount:
-            self.huo -= float(amount)
-            logger.debug(f"用户 {self.user_name} 花费了 {amount} 火，当前余额: {self.huo} 火")
-            return True
-        else:
-            logger.warning(f"用户 {self.user_name} 余额不足，无法花费 {amount} 火，当前余额: {self.huo} 火")
-            return False
-    
-    def __str__(self):
-        return f"User(id={self.user_id}, name={self.user_name}, yuan={self.yuan}, huo={self.huo})"    
+class UserMetaORM(Base):
+    __tablename__ = "user_meta"
+    room_id = Column(String, primary_key=True)
+    user_id = Column(String, primary_key=True)
+    has_spoken = Column(Boolean, default=False)
+    last_interval_reward_huo_ts = Column(Float, default=0.0)
+    last_interval_reward_yuan_ts = Column(Float, default=0.0)
 
-
+# -------------------- Policy --------------------
 @dataclass
 class CashPolicy:
-    """房间内现金增长规则。"""
-
     enabled: bool = True
-    initial_amount: float = 10.0
-    reward_per_message: float = 0.0
-    reward_interval_seconds: int = 0
-    reward_per_interval: float = 0.0
-
-
-@dataclass
-class _UserMeta:
-    """用户在房间内的发言与奖励状态。"""
-
-    has_spoken: bool = False
-    last_interval_reward_ts: float = 0.0
-
-class CashSQL:
-    '''
-    现金系统的数据库，实际上直接采用dict来模拟，后续可以替换为真正的数据库。
-    '''
-    def __init__(self, users: dict[str, User] | None = None):
-        self.users = users if users is not None else {}
+    initial_huo: float = 0.0
+    reward_huo_per_message: float = 0.0
+    reward_huo_interval_seconds: int = 0
+    reward_huo_per_interval: float = 0.0
     
-    def get_user(self, user_id: str) -> User | None:
-        return self.users.get(user_id)
+    initial_yuan: float = 10.0
+    reward_yuan_per_message: float = 0.0
+    reward_yuan_interval_seconds: int = 0
+    reward_yuan_per_interval: float = 0.0
     
-    def add_user(self, user: User) -> None:
-        if user.user_id in self.users:
-            logger.warning(f"用户 ID {user.user_id} 已存在，正在覆盖原有用户数据")
-        self.users[user.user_id] = user
-        logger.debug(f"添加用户 {user}")
-    
-    def update_user(self, user: User) -> None:
-        self.users[user.user_id] = user
-        logger.debug(f"更新用户 {user}")
-    
-    def remove_user(self, user_id: str) -> None:
-        if user_id in self.users:
-            removed_user = self.users.pop(user_id)
-            logger.debug(f"移除用户 {removed_user}")
-        else:
-            logger.warning(f"尝试移除不存在的用户 ID: {user_id}")
-        
-    def clear(self) -> None:
-        self.users.clear()
-        logger.debug("清空所有用户数据")
-
-
-class CashSystem:
-    '''
-    现金系统（CashSystem）是一个独立的模块，负责处理与现金相关的逻辑。
-    '''
-    def __init__(self, users: list[str]):
-        self.sql = CashSQL()
-        self.init_users_from_groups(users)
-    
-    def init_users_from_groups(self, users: list[str]) -> None:
-        '''
-        从分组列表中初始化用户数据。
-        '''
-        for user_id in users:
-            if self.sql.get_user(user_id) is None:
-                new_user = User(user_id=user_id, user_name=f"User{user_id}")
-                self.sql.add_user(new_user)
-                logger.debug(f"从分组初始化用户: {new_user}")
-            else:
-                logger.debug(f"用户 ID {user_id} 已存在，跳过初始化")
-
 
 class RoomCashSystem:
-    """按房间和用户维度管理 cash 的内存实现。"""
-
-    def __init__(self, policy: CashPolicy | None = None):
+    def __init__(self, db_path: str = "cash.db", policy: CashPolicy | None = None):
         self.policy = policy or CashPolicy()
-        self._rooms: dict[str, CashSQL] = {}
-        self._meta: dict[str, dict[str, _UserMeta]] = {}
+        self.engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"timeout": 5},
+        )
 
-    def _room_sql(self, room_id: str) -> CashSQL:
-        sql = self._rooms.get(room_id)
-        if sql is None:
-            sql = CashSQL()
-            self._rooms[room_id] = sql
-        return sql
+        # WAL 方式，建议用 exec_driver_sql
+        with self.engine.begin() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
 
-    def _room_meta(self, room_id: str) -> dict[str, _UserMeta]:
-        room_meta = self._meta.get(room_id)
-        if room_meta is None:
-            room_meta = {}
-            self._meta[room_id] = room_meta
-        return room_meta
+        Base.metadata.create_all(self.engine)
 
-    def _ensure_user(self, room_id: str, user_id: str, user_name: str) -> User:
-        sql = self._room_sql(room_id)
-        user = sql.get_user(user_id)
-        if user is None:
-            user = User(user_id=user_id, user_name=user_name)
-            sql.add_user(user)
-        else:
-            user.user_name = user_name
-            sql.update_user(user)
-        return user
+        # expire_on_commit=False 避免 DetachedInstanceError
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
-    def reward_for_message(
-        self,
-        room_id: str,
-        user_id: str,
-        user_name: str,
-        *,
-        now_ts: float | None = None,
-    ) -> User:
-        user = self._ensure_user(room_id, user_id, user_name)
-        if not self.policy.enabled:
+    # -------------------- 用户初始化 --------------------
+    def init_users_from_groups(self, users: list[str], room_id: str) -> None:
+        with self.Session() as session:
+            for user_id in users:
+                user = session.get(UserORM, (room_id, user_id))
+                if user is None:
+                    new_user = UserORM(user_id=user_id, room_id=room_id, user_name=f"User{user_id}")
+                    session.add(new_user)
+                else:
+                    user.user_name = f"User{user_id}"
+            session.commit()
+
+    def _ensure_user(self, room_id: str, user_id: str, user_name: str) -> UserORM:
+        with self.Session() as session:
+            user = session.get(UserORM, (room_id, user_id))
+            if user is None:
+                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
+                session.add(user)
+                session.commit()
+            else:
+                user.user_name = user_name
+                session.commit()
             return user
 
-        current_ts = now_ts if now_ts is not None else time.time()
-        room_meta = self._room_meta(room_id)
-        user_meta = room_meta.get(user_id)
-        if user_meta is None:
-            user_meta = _UserMeta()
-            room_meta[user_id] = user_meta
+    def _get_meta(self, room_id: str, user_id: str) -> UserMetaORM:
+        with self.Session() as session:
+            meta = session.get(UserMetaORM, (room_id, user_id))
+            if meta is None:
+                meta = UserMetaORM(user_id=user_id, room_id=room_id)
+                session.add(meta)
+                session.commit()
+            return meta
+    
+    # -------------------- 定期发奖励 --------------------
+    def _apply_interval_reward(self, user, meta, current_ts: float | None = None) -> None:
+        if current_ts is None:
+            current_ts = time.time()
+            
+        # 定期奖励：火
+        if self.policy.reward_huo_interval_seconds > 0 and self.policy.reward_huo_per_interval > 0:
+            elapsed = current_ts - meta.last_interval_reward_huo_ts
+            if elapsed >= self.policy.reward_huo_interval_seconds:
+                n = int(elapsed // self.policy.reward_huo_interval_seconds)
+                user.huo += n * self.policy.reward_huo_per_interval
+                meta.last_interval_reward_huo_ts += n * self.policy.reward_huo_interval_seconds
 
-        if not user_meta.has_spoken:
-            if self.policy.initial_amount > 0:
-                user.add_huo(self.policy.initial_amount)
-            user_meta.has_spoken = True
-            user_meta.last_interval_reward_ts = current_ts
-            logger.debug(
-                "Cash first-message reward applied: room={}, user={}, amount={}, balance={}",
-                room_id,
-                user_id,
-                self.policy.initial_amount,
-                user.huo,
-            )
-            return user
+        # 定期奖励：元
+        if self.policy.reward_yuan_interval_seconds > 0 and self.policy.reward_yuan_per_interval > 0:
+            elapsed = current_ts - meta.last_interval_reward_yuan_ts
+            if elapsed >= self.policy.reward_yuan_interval_seconds:
+                n = int(elapsed // self.policy.reward_yuan_interval_seconds)
+                user.yuan += n * self.policy.reward_yuan_per_interval
+                meta.last_interval_reward_yuan_ts += n * self.policy.reward_yuan_interval_seconds
 
-        if self.policy.reward_per_message > 0:
-            user.add_huo(self.policy.reward_per_message)
+    # -------------------- 发弹幕奖励 --------------------
+    def reward_for_message(self, room_id: str, user_id: str, user_name: str, *, now_ts: float | None = None) -> tuple[float, float]:
+        with self.Session() as session:
+            user = session.get(UserORM, (room_id, user_id))
+            if not user:
+                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
+                session.add(user)
+                session.commit()
 
-        if self.policy.reward_interval_seconds > 0 and self.policy.reward_per_interval > 0:
-            elapsed = current_ts - user_meta.last_interval_reward_ts
-            if elapsed >= self.policy.reward_interval_seconds:
-                user.add_huo(self.policy.reward_per_interval)
-                user_meta.last_interval_reward_ts = current_ts
+            meta = session.get(UserMetaORM, (room_id, user_id))
+            if not meta:
+                meta = UserMetaORM(user_id=user_id, room_id=room_id)
+                session.add(meta)
+                session.commit()
 
-        return user
+            if not self.policy.enabled:
+                return (user.yuan, user.huo)
 
-    def spend_huo(
-        self,
-        room_id: str,
-        user_id: str,
-        user_name: str,
-        amount: float,
-    ) -> tuple[bool, float]:
-        if not self.policy.enabled:
-            # cash 系统禁用时，允许无限消费
-            return True, 0.0
+            current_ts = now_ts if now_ts is not None else time.time()
 
-        user = self._ensure_user(room_id, user_id, user_name)
-        cost = max(0.0, float(amount))
-        success = user.spend_huo(cost)
-        return success, user.huo
+            # 首条弹幕奖励
+            if not meta.has_spoken:
+                if self.policy.initial_huo > 0:
+                    user.huo += self.policy.initial_huo
+                if self.policy.initial_yuan > 0:
+                    user.yuan += self.policy.initial_yuan
+                meta.has_spoken = True
+                meta.last_interval_reward_huo_ts = current_ts
+                meta.last_interval_reward_yuan_ts = current_ts
+                session.commit()
+                return (user.yuan, user.huo)
 
-    def get_huo_balance(self, room_id: str, user_id: str, user_name: str) -> float:
-        user = self._ensure_user(room_id, user_id, user_name)
-        return user.huo
+            # 每条消息奖励
+            if self.policy.reward_huo_per_message > 0:
+                user.huo += self.policy.reward_huo_per_message
+            if self.policy.reward_yuan_per_message > 0:
+                user.yuan += self.policy.reward_yuan_per_message
 
+            # 定期奖励
+            self._apply_interval_reward(user, meta, current_ts)
 
+            session.commit()
+            
+            logger.debug(f"用户 {user_id} 在房间 {room_id} 发消息，奖励后余额：{user.yuan} 元，{user.huo} 火")
+            
+            return (user.yuan, user.huo)
 
+    # -------------------- 花钱 --------------------
+    def spend_huo(self, room_id: str, user_id: str, user_name: str, amount: float) -> tuple[bool, float]:
+        with self.Session() as session:
+            user = session.get(UserORM, (room_id, user_id))
+            if not user:
+                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
+                session.add(user)
+                session.commit()
 
+            cost = max(0.0, float(amount))
+            if not self.policy.enabled:
+                return True, 0.0
+
+            success = False
+            if user.huo >= cost:
+                user.huo -= cost
+                success = True
+
+            session.commit()
+            return success, user.huo
+
+    def spend_yuan(self, room_id: str, user_id: str, user_name: str, amount: float) -> tuple[bool, float]:
+        with self.Session() as session:
+            user = session.get(UserORM, (room_id, user_id))
+            if not user:
+                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
+                session.add(user)
+                session.commit()
+
+            cost = max(0.0, float(amount))
+            if not self.policy.enabled:
+                return True, 0.0
+
+            success = False
+            if user.yuan >= cost:
+                user.yuan -= cost
+                success = True
+
+            session.commit()
+            return success, user.yuan
+
+    # -------------------- 查询余额 --------------------
+    def get_balance(self, room_id: str, user_id: str, user_name: str) -> Optional[tuple[float, float]]:
+        with self.Session() as session:
+            user = session.get(UserORM, (room_id, user_id))
+            if not user:
+                return None
+
+            meta = session.get(UserMetaORM, (room_id, user_id))
+            if not meta:
+                meta = UserMetaORM(user_id=user_id, room_id=room_id)
+                session.add(meta)
+                session.commit()
+
+            self._apply_interval_reward(user, meta)
+            return (user.yuan, user.huo)
+
+    def get_all_balances(self, room_id: str, user_id: str) -> dict[str, float]:
+        with self.Session() as session:
+            user = session.query(UserORM).filter_by(room_id=room_id, user_id=user_id).first()
+            if user is None:
+                return {"yuan": 0.0, "huo": 0.0}
+            return {"yuan": user.yuan, "huo": user.huo}
+    
+    # -------------------- 清理房间/结束晚会 --------------------
+    def clear_room(self, room_id: str) -> None:
+        """清空单个房间的数据"""
+        with self.Session() as session:
+            session.query(UserORM).filter_by(room_id=room_id).delete()
+            session.query(UserMetaORM).filter_by(room_id=room_id).delete()
+            session.commit()
+
+    def clear_all(self) -> None:
+        """清空所有房间数据"""
+        with self.Session() as session:
+            session.query(UserORM).delete()
+            session.query(UserMetaORM).delete()
+            session.commit()

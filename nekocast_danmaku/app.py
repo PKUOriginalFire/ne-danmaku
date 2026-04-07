@@ -211,12 +211,18 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
 
     cash_policy = CashPolicy(
         enabled=config.danmaku.cash.enabled,
-        initial_amount=max(0.0, float(config.danmaku.cash.initial_amount)),
-        reward_per_message=max(0.0, float(config.danmaku.cash.reward_per_message)),
-        reward_interval_seconds=max(0, int(config.danmaku.cash.reward_interval_seconds)),
-        reward_per_interval=max(0.0, float(config.danmaku.cash.reward_per_interval)),
+        
+        initial_huo=max(0.0, float(config.danmaku.cash.initial_huo)),
+        reward_huo_per_message=max(0.0, float(config.danmaku.cash.reward_huo_per_message)),
+        reward_huo_interval_seconds=max(0, int(config.danmaku.cash.reward_huo_interval_seconds)),
+        reward_huo_per_interval=max(0.0, float(config.danmaku.cash.reward_huo_per_interval)),
+        initial_yuan=max(0.0, float(config.danmaku.cash.initial_yuan)),
+        reward_yuan_per_message=max(0.0, float(config.danmaku.cash.reward_yuan_per_message)),
+        reward_yuan_interval_seconds=max(0, int(config.danmaku.cash.reward_yuan_interval_seconds)),
+        reward_yuan_per_interval=max(0.0, float(config.danmaku.cash.reward_yuan_per_interval)),
     )
-    room_cash_system = RoomCashSystem(cash_policy)
+    db_path = config.danmaku.cash.db_path or "cash.db"
+    room_cash_system = RoomCashSystem(db_path, cash_policy)
 
     # 挂载到 app.state，供路由和其他模块使用
     app.state.danmaku_manager = connection_manager

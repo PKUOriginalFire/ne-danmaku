@@ -41,7 +41,6 @@ satori_task: Task | None = None
 launart: Launart | None = None
 # Launart 实例，用于管理客户端生命周期
 
-
 async def start_satori_client(
     config: SatoriConfig,
     connection_manager: ConnectionManager,
@@ -153,7 +152,7 @@ async def start_satori_client(
                 danmaku,
             )
 
-        if isinstance(danmaku, (SuperChatMessage, GiftMessage)):
+        if isinstance(danmaku, SuperChatMessage):
             allowed, balance = room_cash_system.spend_huo(
                 room_id=danmaku_channel,
                 user_id=cash_user_id,
@@ -161,7 +160,43 @@ async def start_satori_client(
                 amount=danmaku.cost,
             )
             if not allowed:
-                return
+                # 则将弹幕替换为普通弹幕
+                logger.info(
+                    "用户 {}-{} 的余额不足，无法发送特权弹幕，已替换为普通弹幕",
+                    userid,
+                    username,
+                )
+                danmaku = DanmakuBuilder.to_plain(danmaku)
+                logger.debug(
+                    "替换后的普通弹幕对象，频道: {}, 用户: {}-{}, 弹幕对象: {}",
+                    danmaku_channel,
+                    userid,
+                    username,
+                    danmaku,
+                )
+        
+        if isinstance(danmaku, GiftMessage):
+            allowed, balance = room_cash_system.spend_yuan(
+                room_id=danmaku_channel,
+                user_id=cash_user_id,
+                user_name=username,
+                amount=danmaku.cost,
+            )
+            if not allowed:
+                # 则将弹幕替换为普通弹幕
+                logger.info(
+                    "用户 {}-{} 的余额不足，无法发送特权弹幕，已替换为普通弹幕",
+                    userid,
+                    username,
+                )
+                danmaku = DanmakuBuilder.to_plain(danmaku)
+                logger.debug(
+                    "替换后的普通弹幕对象，频道: {}, 用户: {}-{}, 弹幕对象: {}",
+                    danmaku_channel,
+                    userid,
+                    username,
+                    danmaku,
+                )
 
         if isinstance(danmaku, EmoteMessage):
             # 如果是表情消息，尝试缓存表情图片

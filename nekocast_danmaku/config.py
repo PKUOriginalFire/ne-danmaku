@@ -78,10 +78,18 @@ class CashConfig(BaseModel):
     """Cash accrual and spending policy for non-Bilibili sources."""
 
     enabled: bool = True
-    initial_amount: float = 10.0
-    reward_per_message: float = 0.0
-    reward_interval_seconds: int = 0
-    reward_per_interval: float = 0.0
+    
+    initial_huo: float = 0.0
+    reward_huo_per_message: float = 0.0
+    reward_huo_interval_seconds: int = 0
+    reward_huo_per_interval: float = 0.0
+    
+    initial_yuan: float = 100.0
+    reward_yuan_per_message: float = 0.0
+    reward_yuan_interval_seconds: int = 0
+    reward_yuan_per_interval: float = 0.0
+    
+    db_path: Optional[Path] = None
 
 
 class DanmakuConfig(BaseModel):
