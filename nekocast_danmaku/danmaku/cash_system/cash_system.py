@@ -2,11 +2,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from sqlalchemy import (
-    Column, String, Float, Boolean, create_engine, text
+    Column, String, Float, Boolean, create_engine,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-from typing import Optional
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 from loguru import logger
 
@@ -73,29 +71,28 @@ class RoomCashSystem:
                     user.user_name = f"User{user_id}"
             session.commit()
 
-    def _ensure_user(self, room_id: str, user_id: str, user_name: str) -> UserORM:
-        with self.Session() as session:
-            user = session.get(UserORM, (room_id, user_id))
-            if user is None:
-                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
-                session.add(user)
-                session.commit()
-            else:
-                user.user_name = user_name
-                session.commit()
-            return user
-    
-    def _ensure_meta(self, room_id: str, user_id: str) -> UserMetaORM:
-        with self.Session() as session:
-            meta = session.get(UserMetaORM, (room_id, user_id))
-            if meta is None:
-                meta = UserMetaORM(user_id=user_id, room_id=room_id)
-                session.add(meta)
-                session.commit()
-            return meta
+    @staticmethod
+    def _ensure_user(session: Session, room_id: str, user_id: str, user_name: str) -> UserORM:
+        user = session.get(UserORM, (room_id, user_id))
+        if user is None:
+            user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
+            session.add(user)
+            session.flush()
+        elif user.user_name != user_name:
+            user.user_name = user_name
+        return user
+
+    @staticmethod
+    def _ensure_meta(session: Session, room_id: str, user_id: str) -> UserMetaORM:
+        meta = session.get(UserMetaORM, (room_id, user_id))
+        if meta is None:
+            meta = UserMetaORM(user_id=user_id, room_id=room_id)
+            session.add(meta)
+            session.flush()
+        return meta
     
     # -------------------- 定期发奖励 --------------------
-    def _apply_interval_reward(self, user, meta, current_ts: float | None = None) -> None:
+    def _apply_interval_reward(self, user: UserORM, meta: UserMetaORM, current_ts: float | None = None) -> None:
         if current_ts is None:
             current_ts = time.time()
             
@@ -120,10 +117,11 @@ class RoomCashSystem:
         self._ensure_user(room_id, user_id, user_name)
         self._ensure_meta(room_id, user_id)
         with self.Session() as session:
-            user = session.get(UserORM, (room_id, user_id))
-            meta = session.get(UserMetaORM, (room_id, user_id))
+            user = self._ensure_user(session, room_id, user_id, user_name)
+            meta = self._ensure_meta(session, room_id, user_id)
 
             if not self.policy.enabled:
+                session.commit()
                 return (user.yuan, user.huo)
 
             current_ts = now_ts if now_ts is not None else time.time()
@@ -151,47 +149,42 @@ class RoomCashSystem:
 
             session.commit()
             
-            logger.debug(f"用户 {user_id} 在房间 {room_id} 发消息，奖励后余额：{user.yuan} 元，{user.huo} 火")
+            logger.debug(
+                "用户 {} 在房间 {} 发消息，奖励后余额：{} 元，{} 火",
+                user_id, room_id, user.yuan, user.huo,
+            )
             
             return (user.yuan, user.huo)
 
     # -------------------- 花钱 --------------------
     def spend_huo(self, room_id: str, user_id: str, user_name: str, amount: float) -> tuple[bool, float]:
         with self.Session() as session:
-            user = session.get(UserORM, (room_id, user_id))
-            if not user:
-                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
-                session.add(user)
-                session.commit()
+            user = self._ensure_user(session, room_id, user_id, user_name)
 
             cost = max(0.0, float(amount))
             if not self.policy.enabled:
+                session.commit()
                 return True, 0.0
 
-            success = False
-            if user.huo >= cost:
+            success = user.huo >= cost
+            if success:
                 user.huo -= cost
-                success = True
 
             session.commit()
             return success, user.huo
 
     def spend_yuan(self, room_id: str, user_id: str, user_name: str, amount: float) -> tuple[bool, float]:
         with self.Session() as session:
-            user = session.get(UserORM, (room_id, user_id))
-            if not user:
-                user = UserORM(user_id=user_id, room_id=room_id, user_name=user_name)
-                session.add(user)
-                session.commit()
+            user = self._ensure_user(session, room_id, user_id, user_name)
 
             cost = max(0.0, float(amount))
             if not self.policy.enabled:
+                session.commit()
                 return True, 0.0
 
-            success = False
-            if user.yuan >= cost:
+            success = user.yuan >= cost
+            if success:
                 user.yuan -= cost
-                success = True
 
             session.commit()
             return success, user.yuan
@@ -228,19 +221,15 @@ class RoomCashSystem:
             return True
 
     # -------------------- 查询余额 --------------------
-    def get_balance(self, room_id: str, user_id: str, user_name: str) -> Optional[tuple[float, float]]:
+    def get_balance(self, room_id: str, user_id: str, user_name: str) -> tuple[float, float] | None:
         with self.Session() as session:
             user = session.get(UserORM, (room_id, user_id))
             if not user:
                 return None
 
-            meta = session.get(UserMetaORM, (room_id, user_id))
-            if not meta:
-                meta = UserMetaORM(user_id=user_id, room_id=room_id)
-                session.add(meta)
-                session.commit()
-
+            meta = self._ensure_meta(session, room_id, user_id)
             self._apply_interval_reward(user, meta)
+            session.commit()
             return (user.yuan, user.huo)
 
     def get_all_balances(self, room_id: str, user_id: str) -> dict[str, float]:
@@ -252,14 +241,12 @@ class RoomCashSystem:
     
     # -------------------- 清理房间/结束晚会 --------------------
     def clear_room(self, room_id: str) -> None:
-        """清空单个房间的数据"""
         with self.Session() as session:
             session.query(UserORM).filter_by(room_id=room_id).delete()
             session.query(UserMetaORM).filter_by(room_id=room_id).delete()
             session.commit()
 
     def clear_all(self) -> None:
-        """清空所有房间数据"""
         with self.Session() as session:
             session.query(UserORM).delete()
             session.query(UserMetaORM).delete()

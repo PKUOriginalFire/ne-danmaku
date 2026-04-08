@@ -48,6 +48,21 @@ const assetReadyQueue = new AssetReadyQueue(assetManager, {
   maxConcurrent: 6,
 })
 
+const emoteMapping = ref({})
+const EMOTE_PATTERN = /^[\[【](.+?)[\]】]$/
+
+async function loadEmoteMapping() {
+  try {
+    const resp = await fetch('/api/danmaku/v1/emotes')
+    if (resp.ok) {
+      emoteMapping.value = await resp.json()
+    }
+  }
+  catch (e) {
+    console.warn('Failed to load emote mapping', e)
+  }
+}
+
 function applyRoomSettings(settings) {
   roomSettings.value = {
     overlay_opacity: Number(settings?.overlay_opacity ?? 100),
@@ -91,6 +106,26 @@ function emitEmoji(msg, img) {
     },
   }
 
+  danmaku.value.emit(payload)
+}
+
+function emitCustomEmote(emoteUrl, msg) {
+  if (!danmaku.value)
+    return
+  const config = getConfig()
+  const size = msg.size ?? config.defaultSize
+  const img = new Image()
+  img.src = emoteUrl
+  const payload = {
+    render: () => {
+      img.style.width = `${2 * size}px`
+      img.style.height = `${2 * size}px`
+      img.style.display = 'block'
+      img.style.objectFit = 'contain'
+      img.style.opacity = overlayOpacity.value ?? 1
+      return img
+    },
+  }
   danmaku.value.emit(payload)
 }
 
@@ -163,6 +198,17 @@ function sendMessage(msg) {
   const type = msg.type ?? 'plain'
 
   if (type === 'plain') {
+    // Check for text-to-emote conversion: [emote_name] or 【emote_name】
+    const emoteMatch = msg.text?.match(EMOTE_PATTERN)
+    if (emoteMatch) {
+      const emoteName = emoteMatch[1]
+      const emoteUrl = emoteMapping.value[emoteName]
+      if (emoteUrl) {
+        emitCustomEmote(emoteUrl, msg)
+        return
+      }
+    }
+
     const payload = {
       mode,
       text: msg.text,
@@ -258,6 +304,7 @@ function initDanmaku() {
 
 onMounted(() => {
   initDanmaku()
+  loadEmoteMapping()
   connectWebSocket()
 })
 

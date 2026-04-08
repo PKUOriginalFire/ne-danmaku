@@ -431,11 +431,11 @@ onUnmounted(() => {
         <p class="message-text">{{ formatMessageText(message) }}</p>
 
         <div v-if="message.type === 'emote'" class="message-media">
-          <img :src="resolveMediaUrl(message.emote_url) || 'https://placeholder.im/120x120/111827/e5e7eb'" alt="emoji">
+          <img :src="resolveMediaUrl(message.emote_url) || 'https://placehold.co/120x120/111827/e5e7eb'" alt="emoji">
         </div>
 
         <div v-if="message.type === 'gift'" class="message-media">
-          <img :src="resolveMediaUrl(message.image_url) || 'https://placeholder.im/120x120/374151/e5e7eb'" alt="gift">
+          <img :src="resolveMediaUrl(message.image_url) || 'https://placehold.co/120x120/374151/e5e7eb'" alt="gift">
         </div>
 
         <details v-if="shouldShowDebugInfo(message)" class="debug-panel">

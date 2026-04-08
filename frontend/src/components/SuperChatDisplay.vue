@@ -5,7 +5,7 @@
                 :style="{ background: getColor(sc.amount) }">
 
                 <div class="sc-avatar">
-                    <img :src="sc.avatar || 'https://placeholder.im/100x100/cccccc'" alt="avatar" />
+                    <img :src="sc.avatar || 'https://placehold.co/100x100/ffffff/111111'" alt="avatar" />
                 </div>
 
                 <div class="sc-text-wrap">

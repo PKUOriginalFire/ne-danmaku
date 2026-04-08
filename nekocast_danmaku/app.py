@@ -120,10 +120,16 @@ def create_api_router(config: AppConfig) -> APIRouter:
 
     from .danmaku.routes import create_router as create_danmaku_router
     from .emoji.routes import router as emoji_router
+    from .emotes.routes import create_emote_router
 
     danmaku_router = create_danmaku_router(config.danmaku)
     router.include_router(danmaku_router, prefix="/api/danmaku/v1", tags=["danmaku"])
     router.include_router(emoji_router, prefix="/api/emoji", tags=["emoji"])
+    router.include_router(
+        create_emote_router(),
+        prefix="/api/danmaku/v1/emotes",
+        tags=["emotes"],
+    )
 
     return router
 
@@ -181,14 +187,14 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
     
     blacklist = BlacklistService()
     blacklist.reload(
-        config.danmaku.blacklist_file,
-        config.danmaku.forbidden_users_file,
+        config.danmaku.resolved_blacklist_file,
+        config.danmaku.resolved_forbidden_users_file,
     )
 
     start_blacklist_watcher(
         blacklist,
-        config.danmaku.blacklist_file,
-        config.danmaku.forbidden_users_file,
+        config.danmaku.resolved_blacklist_file,
+        config.danmaku.resolved_forbidden_users_file,
     )
 
     configure_parsing_rules(
@@ -209,26 +215,29 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         room_settings_service=room_settings_service,
     )
 
+    cash_cfg = config.danmaku.cash
     cash_policy = CashPolicy(
-        enabled=config.danmaku.cash.enabled,
-        
-        initial_huo=max(0.0, float(config.danmaku.cash.initial_huo)),
-        reward_huo_per_message=max(0.0, float(config.danmaku.cash.reward_huo_per_message)),
-        reward_huo_interval_seconds=max(0, int(config.danmaku.cash.reward_huo_interval_seconds)),
-        reward_huo_per_interval=max(0.0, float(config.danmaku.cash.reward_huo_per_interval)),
-        
-        initial_yuan=max(0.0, float(config.danmaku.cash.initial_yuan)),
-        reward_yuan_per_message=max(0.0, float(config.danmaku.cash.reward_yuan_per_message)),
-        reward_yuan_interval_seconds=max(0, int(config.danmaku.cash.reward_yuan_interval_seconds)),
-        reward_yuan_per_interval=max(0.0, float(config.danmaku.cash.reward_yuan_per_interval)),
+        enabled=cash_cfg.enabled,
+        initial_huo=max(0.0, cash_cfg.initial_huo),
+        reward_huo_per_message=max(0.0, cash_cfg.reward_huo_per_message),
+        reward_huo_interval_seconds=max(0, cash_cfg.reward_huo_interval_seconds),
+        reward_huo_per_interval=max(0.0, cash_cfg.reward_huo_per_interval),
+        initial_yuan=max(0.0, cash_cfg.initial_yuan),
+        reward_yuan_per_message=max(0.0, cash_cfg.reward_yuan_per_message),
+        reward_yuan_interval_seconds=max(0, cash_cfg.reward_yuan_interval_seconds),
+        reward_yuan_per_interval=max(0.0, cash_cfg.reward_yuan_per_interval),
     )
-    
-    db_path = config.danmaku.cash.db_path or "cash.db"
+
+    db_path = cash_cfg.db_path or "cash.db"
     room_cash_system = RoomCashSystem(db_path, cash_policy)
 
     # 挂载到 app.state，供路由和其他模块使用
     app.state.danmaku_manager = connection_manager
     app.state.room_cash_system = room_cash_system
+
+    # 扫描自定义表情包
+    from .emotes.scanner import scan_emotes
+    app.state.emote_mapping = scan_emotes(config.danmaku.asset_dir)
 
     # 如果配置了 Satori 上游，则启动对应客户端
     if config.danmaku.satori:

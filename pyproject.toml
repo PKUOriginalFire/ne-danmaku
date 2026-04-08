@@ -18,6 +18,7 @@ dependencies = [
     "watchdog>=6.0.0",
     "aiocqhttp>=1.4.4",
     "pillow>=12.1.1",
+    "sqlalchemy>=2.0.0",
 ]
 
 [build-system]

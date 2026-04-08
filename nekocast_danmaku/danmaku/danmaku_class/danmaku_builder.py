@@ -178,11 +178,10 @@ class DanmakuBuilder:
             message.position = "scroll"
             return message
         elif isinstance(message, EmoteMessage):
-            text = ""  # 表情弹幕没有文本内容
             return PlainDanmakuMessage(
                 senderId=message.senderId,
                 sender=message.sender,
-                text=text,
+                text="[表情]",
             )
         elif isinstance(message, SuperChatMessage):
             return PlainDanmakuMessage(
@@ -191,11 +190,10 @@ class DanmakuBuilder:
                 text=message.text,
             )
         elif isinstance(message, GiftMessage):
-            text = f"{message.gift_name}"
             return PlainDanmakuMessage(
                 senderId=message.senderId,
                 sender=message.sender,
-                text=text,
+                text=message.gift_name,
             )
         else:
             raise ValueError("Unsupported message type for to_plain conversion")
