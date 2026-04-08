@@ -7,3 +7,5 @@ node_modules/
 *.db
 *.db-shm
 *.db-wal
+
+frontend/src/assets/emoji/*

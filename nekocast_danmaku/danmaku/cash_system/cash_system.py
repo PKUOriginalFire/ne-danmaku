@@ -114,6 +114,8 @@ class RoomCashSystem:
 
     # -------------------- 发弹幕奖励 --------------------
     def reward_for_message(self, room_id: str, user_id: str, user_name: str, *, now_ts: float | None = None) -> tuple[float, float]:
+        self._ensure_user(room_id, user_id, user_name)
+        self._ensure_meta(room_id, user_id)
         with self.Session() as session:
             user = self._ensure_user(session, room_id, user_id, user_name)
             meta = self._ensure_meta(session, room_id, user_id)
@@ -186,6 +188,37 @@ class RoomCashSystem:
 
             session.commit()
             return success, user.yuan
+    
+    def charge_user(self, room_id: str, user_id: str, amount_yuan: float, amount_huo: float) -> bool:
+        if user_id == "all":
+            return self.charge_all_user(room_id, amount_yuan, amount_huo)
+        
+        with self.Session() as session:
+            user = session.get(UserORM, (room_id, user_id))
+            if not user:
+                user = UserORM(user_id=user_id, room_id=room_id, user_name=f"User{user_id}")
+                session.add(user)
+                session.commit()
+            
+            # 只要amount是正常量（负数就是扣除），就充进
+            if amount_yuan != 0:
+                user.yuan += amount_yuan
+            if amount_huo != 0:
+                user.huo += amount_huo
+
+            session.commit()
+            return True
+    
+    def charge_all_user(self, room_id: str, amount_yuan: float, amount_huo: float) -> None:
+        with self.Session() as session:
+            users = session.query(UserORM).filter_by(room_id=room_id).all()
+            for user in users:
+                if amount_yuan != 0:
+                    user.yuan += amount_yuan
+                if amount_huo != 0:
+                    user.huo += amount_huo
+            session.commit()
+            return True
 
     # -------------------- 查询余额 --------------------
     def get_balance(self, room_id: str, user_id: str, user_name: str) -> tuple[float, float] | None:

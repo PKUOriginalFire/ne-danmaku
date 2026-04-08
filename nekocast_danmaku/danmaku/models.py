@@ -66,6 +66,13 @@ class RoomSettingsService:
         self._settings[group] = settings
         return settings
 
+class CashCharge(BaseModel):
+    """充值请求数据结构"""
+
+    user_id: str
+    yuan: float = 0.0
+    huo: float = 0.0
+
 
 # =========================
 # 弹幕过滤器
@@ -123,6 +130,9 @@ class BlacklistService:
         """
         判断一条弹幕是否应被黑名单过滤
         """
+        
+        if message.is_special:
+            return False
 
         # ---------- 用户黑名单 ----------
         if message.senderId and message.senderId in self._forbidden_users:

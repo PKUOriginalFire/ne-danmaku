@@ -11,7 +11,7 @@ from hmac import compare_digest
 from loguru import logger
 
 from ..config import DanmakuConfig
-from .models import ConnectionManager, DanmakuPacket, RoomSettings
+from .models import ConnectionManager, DanmakuPacket, RoomSettings, CashCharge
 
 
 def create_router(config: DanmakuConfig) -> APIRouter:
@@ -153,5 +153,46 @@ def create_router(config: DanmakuConfig) -> APIRouter:
         except WebSocketDisconnect:
             # 客户端断开时清理连接
             connection_manager.disconnect_client(websocket, group)
+
+    # 以下是和金钱系统相关
+    @router.get("/{group}/{user_id}")
+    def get_balance(request: Request, group: str, user_id: str):
+        """查询用户余额
+        """
+        
+        cash_system = request.app.state.room_cash_system
+        
+        balance = cash_system.get_balance(group, user_id, "unknown_user")
+        
+        if balance is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {"group": group, "user_id": user_id, "yuan": balance[0], "huo": balance[1]}
+    
+    @router.post("/admin/rooms/{group}/charge")
+    def charge_user(
+        request: Request,
+        group: str,
+        charge: CashCharge,
+        token: str = Query(None),
+    ):
+        
+        """管理员充值接口
+        """
+        validate_admin_token(token)
+        
+        amount_yuan = float(charge.yuan)
+        amount_huo = float(charge.huo)
+        
+        user_id = charge.user_id.strip()
+        
+        cash_system = request.app.state.room_cash_system
+        
+        success = cash_system.charge_user(group, user_id, amount_yuan, amount_huo)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {"message": f"Charged {amount_yuan} yuan and {amount_huo} huo to user {user_id} in group {group}"}
     
     return router

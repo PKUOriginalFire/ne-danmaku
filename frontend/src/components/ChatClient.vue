@@ -27,6 +27,14 @@ const authToken = ref('')
 const settingsSaving = ref(false)
 const settingsError = ref('')
 const clearingOverlay = ref(false)
+const chargeUserId = ref('')
+const chargeYuan = ref('')
+const chargeHuo = ref('')
+const charging = ref(false)
+// 如果充值的钱有负数，提醒注意
+const MinusYuanWarning = computed(() => Number(chargeYuan.value) < 0)
+const MinusHuoWarning = computed(() => Number(chargeHuo.value) < 0)
+const canCharge = computed(() => hasAuthKey.value && !charging.value)
 
 const roomSettings = ref({
   overlay_opacity: 100,
@@ -119,6 +127,7 @@ function sendMessage() {
   const packet = {
     group: props.roomId,
     danmaku: {
+      type: 'plain',
       text: inputValue.value.trim(),
       sender: senderName.value.trim(),
     },
@@ -306,6 +315,63 @@ function connectWebSocket() {
   connectUpstreamWebSocket()
 }
 
+async function chargeUserNow() {
+  if (!canCharge.value)
+    return
+
+  const rawUserId = chargeUserId.value.trim()
+  const normalizedUserId = rawUserId.toLowerCase()
+
+  if (!rawUserId) {
+    settingsError.value = 'QQ号不能为空'
+    return
+  }
+
+  if (normalizedUserId !== 'all' && !/^\d+$/.test(rawUserId)) {
+    settingsError.value = 'QQ号必须是纯数字（all 特殊值暂不考虑大小写）'
+    return
+  }
+
+  const yuan = Number(chargeYuan.value || 0)
+  const huo = Number(chargeHuo.value || 0)
+
+  if (!Number.isFinite(yuan) || !Number.isFinite(huo)) {
+    settingsError.value = '元/火必须是合法数字'
+    return
+  }
+
+  charging.value = true
+  settingsError.value = ''
+  try {
+    const resp = await fetch(`/api/danmaku/v1/admin/rooms/${encodeURIComponent(props.roomId)}/charge?token=${encodeURIComponent(authToken.value)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: normalizedUserId === 'all' ? 'all' : rawUserId,
+        yuan,
+        huo,
+      }),
+    })
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`)
+
+    showMessage({
+      text: `充值已发送: user_id=${normalizedUserId === 'all' ? 'all' : rawUserId}, yuan=${yuan}, huo=${huo}`,
+      source: 'system',
+    })
+
+    chargeYuan.value = ''
+    chargeHuo.value = ''
+  }
+  catch (e) {
+    settingsError.value = `充值失败: ${e.message}`
+    showMessage({ text: settingsError.value, source: 'system' })
+  }
+  finally {
+    charging.value = false
+  }
+}
+
 watch(inputValue, () => {
   if (error.value)
     error.value = ''
@@ -416,6 +482,34 @@ onUnmounted(() => {
         发送数据包
       </button>
       <div v-if="error" class="error-text">{{ error }}</div>
+    </section>
+
+    <section v-if="hasAuthKey" class="charge-panel">
+      <input
+        v-model="chargeUserId"
+        class="text-input"
+        type="text"
+        placeholder="QQ号/all"
+      >
+      <input
+        v-model="chargeYuan"
+        class="text-input"
+        :class="{ 'warning-input': MinusYuanWarning }"
+        type="number"
+        step="0.01"
+        placeholder="元"
+      >
+      <input
+        v-model="chargeHuo"
+        class="text-input"
+        :class="{ 'warning-input': MinusHuoWarning }"
+        type="number"
+        step="0.01"
+        placeholder="火"
+      >
+      <button class="primary-btn" :disabled="!canCharge" @click="chargeUserNow">
+        {{ charging ? '发送中...' : '发送' }}
+      </button>
     </section>
 
     <div v-if="inputValue" class="char-counter">
@@ -709,5 +803,18 @@ onUnmounted(() => {
   color: #94a3b8;
   font-size: 0.85rem;
   letter-spacing: 0.05em;
+}
+
+.charge-panel {
+  padding: 0 20px 16px;
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(2, minmax(120px, 1fr)) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.warning-input {
+  background-color: rgba(239, 68, 68, 0.5);
+  border-color: rgba(239, 68, 68, 0.25);
 }
 </style>
