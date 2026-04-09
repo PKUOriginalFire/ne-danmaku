@@ -179,6 +179,7 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         BlacklistService,
         RoomSettingsService,
     )
+    from .danmaku.room_db import RoomDB
     from .danmaku.cash_system import CashPolicy, RoomCashSystem
     from .danmaku.danmaku_class.danmaku_builder import configure_parsing_rules
     from .danmaku.watcher import start_blacklist_watcher
@@ -208,8 +209,12 @@ async def startup_danmaku(app: FastAPI, config: AppConfig) -> None:
         dedup_window=config.danmaku.dedup_window,
     )
 
+    # 创建房间设置数据库和服务
+    room_db_path = str(config.danmaku.room_db_path or "room.db")
+    room_db = RoomDB(room_db_path)
+    room_settings_service = RoomSettingsService(room_db=room_db)
+
     # 创建 WebSocket 连接管理器
-    room_settings_service = RoomSettingsService()
     connection_manager = ConnectionManager(
         danmaku_filter=danmaku_filter,
         room_settings_service=room_settings_service,

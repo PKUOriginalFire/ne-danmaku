@@ -67,6 +67,7 @@
       "reward_yuan_per_interval": 0.0,
       "db_path": "cash.db"
     },
+    "room_db_path": "room.db",
     "blacklists": []
   }
 }

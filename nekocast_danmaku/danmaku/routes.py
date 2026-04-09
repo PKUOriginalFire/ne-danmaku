@@ -9,6 +9,7 @@ import json
 from fastapi import WebSocket, WebSocketDisconnect, Query, APIRouter, HTTPException, Request
 from hmac import compare_digest
 from loguru import logger
+from pydantic import BaseModel
 
 from ..config import DanmakuConfig
 from .models import ConnectionManager, DanmakuPacket, RoomSettings
@@ -40,6 +41,70 @@ def create_router(config: DanmakuConfig) -> APIRouter:
             raise HTTPException(status_code=401, detail="Missing admin token")
         if not config.upstream or not compare_digest(token.strip(), config.upstream.token):
             raise HTTPException(status_code=403, detail="Invalid admin token")
+
+    @router.get("/balance")
+    async def query_balance_by_name(request: Request, username: str = Query(..., min_length=1)):
+        """按用户名查询燕元和燕火余额（无需鉴权）"""
+        room_cash_system = getattr(request.app.state, "room_cash_system", None)
+        if room_cash_system is None:
+            raise HTTPException(status_code=503, detail="Cash system not available")
+        results = room_cash_system.get_balance_by_name(username)
+        return {"username": username, "balances": results}
+
+    @router.get("/balance_by_id")
+    async def query_balance_by_id(request: Request, user_id: str = Query(..., min_length=1)):
+        """按用户 ID 查询燕元和燕火余额（无需鉴权）"""
+        room_cash_system = getattr(request.app.state, "room_cash_system", None)
+        if room_cash_system is None:
+            raise HTTPException(status_code=503, detail="Cash system not available")
+        results = room_cash_system.get_balance_by_user_id(user_id)
+        return {"user_id": user_id, "balances": results}
+
+    @router.get("/admin/rooms/{group}/users")
+    async def list_room_users(request: Request, group: str, token: str = Query(None)):
+        """列出房间内所有用户（需要鉴权）"""
+        validate_admin_token(token)
+        room_cash_system = getattr(request.app.state, "room_cash_system", None)
+        if room_cash_system is None:
+            raise HTTPException(status_code=503, detail="Cash system not available")
+        users = room_cash_system.list_room_users(group)
+        return {"room_id": group, "users": users}
+
+    class ChargeRequest(BaseModel):
+        currency: str  # "huo" or "yuan"
+        amount: float
+
+    @router.post("/admin/rooms/{group}/charge/{user_id}")
+    async def charge_user(request: Request, group: str, user_id: str, body: ChargeRequest, token: str = Query(None)):
+        """为指定用户充值燕火/燕元（需要鉴权）"""
+        validate_admin_token(token)
+        room_cash_system = getattr(request.app.state, "room_cash_system", None)
+        if room_cash_system is None:
+            raise HTTPException(status_code=503, detail="Cash system not available")
+        if body.currency == "huo":
+            result = room_cash_system.charge_huo(group, user_id, body.amount)
+        elif body.currency == "yuan":
+            result = room_cash_system.charge_yuan(group, user_id, body.amount)
+        else:
+            raise HTTPException(status_code=400, detail="currency must be 'huo' or 'yuan'")
+        if result is None:
+            raise HTTPException(status_code=404, detail="User not found in this room")
+        return result
+
+    @router.post("/admin/rooms/{group}/charge_all")
+    async def charge_all_users(request: Request, group: str, body: ChargeRequest, token: str = Query(None)):
+        """为房间所有用户充值燕火/燕元（需要鉴权）"""
+        validate_admin_token(token)
+        room_cash_system = getattr(request.app.state, "room_cash_system", None)
+        if room_cash_system is None:
+            raise HTTPException(status_code=503, detail="Cash system not available")
+        if body.currency == "huo":
+            count = room_cash_system.charge_all_huo(group, body.amount)
+        elif body.currency == "yuan":
+            count = room_cash_system.charge_all_yuan(group, body.amount)
+        else:
+            raise HTTPException(status_code=400, detail="currency must be 'huo' or 'yuan'")
+        return {"room_id": group, "currency": body.currency, "amount": body.amount, "affected_users": count}
 
     @router.get("/admin/rooms/{group}/settings")
     async def get_room_settings(request: Request, group: str, token: str = Query(None)):

@@ -54,16 +54,28 @@ class RoomSettings(BaseModel):
 
 
 class RoomSettingsService:
-    """管理每个 room 的可动态更新设置。"""
+    """管理每个 room 的可动态更新设置。
 
-    def __init__(self):
-        self._settings: dict[str, RoomSettings] = {}
+    如果提供了 ``room_db``，设置会同时持久化到 SQLite；
+    否则退化为纯内存模式（重启丢失）。
+    """
+
+    def __init__(self, room_db=None):
+        from .room_db import RoomDB
+
+        self._db: RoomDB | None = room_db
+        # 优先从数据库加载已有设置
+        self._settings: dict[str, RoomSettings] = (
+            self._db.load_all() if self._db else {}
+        )
 
     def get(self, group: str) -> RoomSettings:
         return self._settings.get(group, RoomSettings())
 
     def update(self, group: str, settings: RoomSettings) -> RoomSettings:
         self._settings[group] = settings
+        if self._db:
+            self._db.save(group, settings)
         return settings
 
 

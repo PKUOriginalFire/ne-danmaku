@@ -28,6 +28,15 @@ const settingsSaving = ref(false)
 const settingsError = ref('')
 const clearingOverlay = ref(false)
 
+// Charge panel state
+const chargeUserId = ref('')
+const chargeCurrency = ref('huo')
+const chargeAmount = ref(1)
+const chargeLoading = ref(false)
+const chargeError = ref('')
+const roomUsers = ref([])
+const roomUsersLoading = ref(false)
+
 const roomSettings = ref({
   overlay_opacity: 100,
   enable_emoji: true,
@@ -209,6 +218,92 @@ async function clearOverlayNow() {
   }
 }
 
+async function fetchRoomUsers() {
+  if (!hasAuthKey.value)
+    return
+  roomUsersLoading.value = true
+  try {
+    const resp = await fetch(`/api/danmaku/v1/admin/rooms/${encodeURIComponent(props.roomId)}/users?token=${encodeURIComponent(authToken.value)}`)
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    roomUsers.value = data.users || []
+  }
+  catch (e) {
+    showMessage({ text: `获取用户列表失败: ${e.message}`, source: 'system' })
+  }
+  finally {
+    roomUsersLoading.value = false
+  }
+}
+
+async function chargeUser() {
+  if (!hasAuthKey.value || chargeLoading.value)
+    return
+  const userId = chargeUserId.value.trim()
+  if (!userId) {
+    chargeError.value = '请输入用户 ID 或从列表选择'
+    return
+  }
+  chargeLoading.value = true
+  chargeError.value = ''
+  try {
+    const resp = await fetch(`/api/danmaku/v1/admin/rooms/${encodeURIComponent(props.roomId)}/charge/${encodeURIComponent(userId)}?token=${encodeURIComponent(authToken.value)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currency: chargeCurrency.value, amount: Number(chargeAmount.value) }),
+    })
+    if (!resp.ok) {
+      const detail = await resp.json().catch(() => null)
+      throw new Error(detail?.detail || `HTTP ${resp.status}`)
+    }
+    const result = await resp.json()
+    const label = chargeCurrency.value === 'huo' ? '燕火' : '燕元'
+    showMessage({ text: `充值成功: ${result.user_name} (${result.user_id}) ${label} ${chargeAmount.value}，当前 ${label}=${chargeCurrency.value === 'huo' ? result.huo : result.yuan}`, source: 'system' })
+    fetchRoomUsers()
+  }
+  catch (e) {
+    chargeError.value = `充值失败: ${e.message}`
+  }
+  finally {
+    chargeLoading.value = false
+  }
+}
+
+async function chargeAllUsers() {
+  if (!hasAuthKey.value || chargeLoading.value)
+    return
+  const label = chargeCurrency.value === 'huo' ? '燕火' : '燕元'
+  if (!window.confirm(`确认为房间 ${props.roomId} 所有用户充值 ${chargeAmount.value} ${label} 吗？`))
+    return
+  chargeLoading.value = true
+  chargeError.value = ''
+  try {
+    const resp = await fetch(`/api/danmaku/v1/admin/rooms/${encodeURIComponent(props.roomId)}/charge_all?token=${encodeURIComponent(authToken.value)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currency: chargeCurrency.value, amount: Number(chargeAmount.value) }),
+    })
+    if (!resp.ok) {
+      const detail = await resp.json().catch(() => null)
+      throw new Error(detail?.detail || `HTTP ${resp.status}`)
+    }
+    const result = await resp.json()
+    showMessage({ text: `全房充值成功: ${result.affected_users} 人，每人 +${result.amount} ${label}`, source: 'system' })
+    fetchRoomUsers()
+  }
+  catch (e) {
+    chargeError.value = `充值失败: ${e.message}`
+  }
+  finally {
+    chargeLoading.value = false
+  }
+}
+
+function selectUserForCharge(userId) {
+  chargeUserId.value = userId
+}
+
 function connectClientWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
   const wsUrl = `${protocol}${window.location.host}/api/danmaku/v1/danmaku/${props.roomId}`
@@ -254,6 +349,7 @@ function connectUpstreamWebSocket() {
   upstreamSocket.value.onopen = () => {
     checkConnectionStatus()
     fetchSettings()
+    fetchRoomUsers()
   }
   upstreamSocket.value.onmessage = (event) => {
     const data = JSON.parse(event.data)
@@ -397,6 +493,48 @@ onUnmounted(() => {
         {{ clearingOverlay ? '清空中...' : '移除现有礼物/SC/弹幕' }}
       </button>
       <div v-if="settingsError" class="error-text">{{ settingsError }}</div>
+    </section>
+
+    <section v-if="hasAuthKey" class="charge-panel">
+      <div class="panel-title">充值管理</div>
+
+      <div class="charge-user-list">
+        <div class="charge-user-list-header">
+          <span>房间用户列表</span>
+          <button class="small-btn" :disabled="roomUsersLoading" @click="fetchRoomUsers">
+            {{ roomUsersLoading ? '刷新中...' : '刷新' }}
+          </button>
+        </div>
+        <div v-if="roomUsers.length === 0" class="empty-list-hint">暂无用户数据</div>
+        <div v-else class="user-list-scroll">
+          <div
+            v-for="u in roomUsers" :key="u.user_id"
+            class="user-list-item"
+            :class="{ selected: chargeUserId === u.user_id }"
+            @click="selectUserForCharge(u.user_id)"
+          >
+            <span class="user-name">{{ u.user_name }}</span>
+            <span class="user-id-tag">{{ u.user_id }}</span>
+            <span class="user-balance">元{{ u.yuan.toFixed(1) }} / 火{{ u.huo.toFixed(1) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="charge-form">
+        <input v-model="chargeUserId" class="text-input" type="text" placeholder="用户 ID（或从上方选择）">
+        <select v-model="chargeCurrency" class="text-input">
+          <option value="huo">燕火</option>
+          <option value="yuan">燕元</option>
+        </select>
+        <input v-model.number="chargeAmount" class="text-input" type="number" step="0.1" placeholder="充值数量">
+        <button class="primary-btn" :disabled="chargeLoading || !chargeUserId.trim()" @click="chargeUser">
+          {{ chargeLoading ? '充值中...' : '充值该用户' }}
+        </button>
+        <button class="warn-btn" :disabled="chargeLoading" @click="chargeAllUsers">
+          {{ chargeLoading ? '充值中...' : '充值全房间' }}
+        </button>
+      </div>
+      <div v-if="chargeError" class="error-text">{{ chargeError }}</div>
     </section>
 
     <section class="composer">
@@ -709,5 +847,130 @@ onUnmounted(() => {
   color: #94a3b8;
   font-size: 0.85rem;
   letter-spacing: 0.05em;
+}
+
+.charge-panel {
+  padding: 18px 20px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.charge-user-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #cbd5f5;
+  font-size: 0.9rem;
+}
+
+.small-btn {
+  padding: 4px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.4);
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.small-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+}
+
+.small-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.user-list-scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.user-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.user-list-item:hover {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.user-list-item.selected {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.user-name {
+  color: #93c5fd;
+  font-weight: 500;
+}
+
+.user-id-tag {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.user-balance {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-list-hint {
+  color: #64748b;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 16px 0;
+}
+
+.charge-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  align-items: center;
+}
+
+.charge-form select {
+  appearance: auto;
+}
+
+.warn-btn {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(120deg, #f59e0b, #f97316);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.warn-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.warn-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(245, 158, 11, 0.35);
 }
 </style>

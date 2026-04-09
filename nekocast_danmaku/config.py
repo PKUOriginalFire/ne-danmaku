@@ -101,6 +101,7 @@ class DanmakuConfig(BaseModel):
     gift: GiftConfig = Field(default_factory=GiftConfig)
     cash: CashConfig = Field(default_factory=CashConfig)
     
+    room_db_path: Optional[Path] = None
     dedup_window: int = 5  # 去重时间窗口，单位秒
 
     asset_dir: Path = DEFAULT_ASSET_DIR
