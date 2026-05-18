@@ -31,6 +31,7 @@
   
 <script setup>
 import { ref } from 'vue'
+import { v4 as uuidv4 } from 'uuid'
 
 /* ===== 核心状态 ===== */
 
@@ -76,7 +77,7 @@ function insertByAmount(list, sc) {
 
 function addSC(data) {
     const sc = {
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         progress: "0%",
         setAutoRemoved: false,
         autoRemoveTimer: null,

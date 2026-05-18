@@ -33,6 +33,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { v4 as uuidv4 } from 'uuid'
 
 /* ===============================
    核心状态
@@ -125,7 +126,7 @@ function addGift(data) {
     const unitCost = totalCost / quantity
 
     const gift = {
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         setAutoRemoved: false,
         autoRemoveTimer: null,
         scale: 1,

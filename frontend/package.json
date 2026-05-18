@@ -12,7 +12,8 @@
     "danmaku": "^2.0.9",
     "vue": "^3.4.0",
     "vue-router": "^4.2.5",
-    "zod": "^4.1.12"
+    "zod": "^4.1.12",
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
