@@ -265,6 +265,26 @@ async def start_onebot_v11_client(
         sender_name = _get_sender_name(event, sender_id)
         cash_user_id = sender_id or f"name:{sender_name}"
 
+        # 兑换码**优先于一切过滤**：先看是不是 <base64>.<64hex>，命中就直接兑换、不进弹幕流程
+        # （否则会被"超长/刷屏"规则和词库误伤 —— 现场就被 ^.{25} 和字面量 64 拦过）
+        _raw = str(event.get("raw_message") or event.get("message") or "").strip()
+        if _raw and "." in _raw:
+            try:
+                _after = room_cash_system.redeem_giftcode(
+                    room_id=danmaku_group,
+                    user_id=cash_user_id,
+                    user_name=sender_name,
+                    giftcode=_raw,
+                )
+                if _after is not None:
+                    logger.info("礼品码兑换成功：{}-{} 余额 {}", sender_name, cash_user_id, _after)
+                    return
+            except GiftCodeFormatError as exc:
+                logger.debug("兑换码格式不符（{}）→ 当普通弹幕", exc)
+            except GiftCodeRedeemError as exc:
+                logger.warning("礼品码兑换失败：{}-{} → {}", sender_name, cash_user_id, exc)
+                return        # 看着像码但兑不了 → 提示后不再当弹幕播
+
         room_cash_system.reward_for_message(
             room_id=danmaku_group,
             user_id=cash_user_id,

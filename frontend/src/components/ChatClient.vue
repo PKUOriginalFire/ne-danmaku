@@ -52,6 +52,9 @@ const roomUsersLoading = ref(false)
 const moderationPanelOpen = ref(false)
 
 const banUserId = ref('')
+const dedupWindow = ref(5)
+const dedupHard = ref(false)
+const dedupCurrent = ref(null)
 const banHard = ref(false)
 const bannedUsers = ref([])
 const bannedUsersLoading = ref(false)
@@ -405,6 +408,54 @@ async function fetchPatterns() {
   }
   finally {
     patternsLoading.value = false
+  }
+}
+
+async function fetchDedupWindow() {
+  moderationError.value = ''
+  try {
+    const resp = await fetch(`/api/danmaku/v1/admin/config?token=${encodeURIComponent(authToken.value)}`)
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    if (typeof data.dedup_window === 'number') {
+      dedupCurrent.value = data.dedup_window
+      dedupWindow.value = data.dedup_window
+    }
+  }
+  catch (e) {
+    moderationError.value = `读取去重窗口失败: ${e.message}`
+  }
+}
+
+// 临时 = 只改内存（persist=false）；Hard = 写回 config.json（persist=true）
+async function applyDedupWindow() {
+  moderationError.value = ''
+  const n = Number(dedupWindow.value)
+  if (!Number.isFinite(n) || n < 0) {
+    moderationError.value = '去重窗口必须是 ≥ 0 的整数（0 = 关闭去重）'
+    return
+  }
+  const win = Math.round(n)
+  try {
+    const resp = await fetch(
+      `/api/danmaku/v1/admin/config?token=${encodeURIComponent(authToken.value)}&persist=${dedupHard.value}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dedup_window: win }),
+      },
+    )
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`)
+    dedupCurrent.value = win
+    showMessage({
+      text: `去重窗口已设为 ${win} 秒${dedupHard.value ? '（已写入配置，永久）' : '（临时，重启失效）'}`,
+      source: 'system',
+    })
+  }
+  catch (e) {
+    moderationError.value = `设置去重窗口失败: ${e.message}`
   }
 }
 
@@ -876,6 +927,34 @@ onUnmounted(() => {
                     Unban
                   </button>
                 </div>
+              </div>
+            </div>
+
+            <div class="moderation-card">
+              <div class="sub-title row-title">
+                <span>去重时间窗口</span>
+
+                <button class="small-btn" @click="fetchDedupWindow">
+                  读取
+                </button>
+              </div>
+
+              <div class="inline-form">
+                <input v-model.number="dedupWindow" class="text-input" type="number" min="0" step="1" placeholder="秒（0 = 关闭去重）">
+
+                <label class="toggle-item">
+                  <input v-model="dedupHard" type="checkbox">
+                  Hard
+                </label>
+
+                <button class="small-btn" @click="applyDedupWindow">
+                  应用
+                </button>
+              </div>
+
+              <div style="opacity: .7; font-size: .85em; margin-top: .4rem;">
+                当前：{{ dedupCurrent === null ? '未读取（点「读取」）' : dedupCurrent + ' 秒' }}
+                · 临时 = 只改内存（重启失效）· Hard = 写入 config.json（永久）
               </div>
             </div>
 

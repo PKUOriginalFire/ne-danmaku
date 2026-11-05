@@ -308,4 +308,10 @@ defineExpose({
 .gift-leave-active {
     transition: all 0.3s ease;
 }
+
+/* 整体放大 1.5 倍（热更新：卡片尺寸） */
+.gift-container {
+    transform: scale(1.5);
+    transform-origin: top left;
+}
 </style>
